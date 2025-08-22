@@ -108,7 +108,7 @@ do
         pcall(function() PlayerGui:SetAttribute("Device", "Tablet") end)
     end
 
-    local function clickGuiButton(btn: GuiButton)
+    local function clickGuiButton(btn)
         local ok = pcall(function() btn:Activate() end)
         if not ok then
             local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
@@ -117,7 +117,7 @@ do
         end
     end
 
-    local function trySelectOn(containerParent: Instance?)
+    local function trySelectOn(containerParent) -- removed `: Instance?`
         local ok, tabletBtn = pcall(function()
             local container = containerParent and containerParent:WaitForChild("Container", 5)
             local tablet    = container and container:WaitForChild("Tablet", 5)
@@ -132,13 +132,11 @@ do
         return false
     end
 
-    -- Khi GUI DeviceSelect xuất hiện trong PlayerGui
     PlayerGui.ChildAdded:Connect(function(child)
         if child.Name ~= "DeviceSelect" then return end
         task.defer(function() trySelectOn(child) end)
     end)
 
-    -- Trường hợp DeviceSelect đã có sẵn
     task.defer(function()
         local existing = PlayerGui:FindFirstChild("DeviceSelect")
         if existing then
@@ -1423,24 +1421,18 @@ local function startBeachballWatchdog()
             local interval = tonumber(G.BB_WATCH_INTERVAL or 300) or 300
             task.wait(interval)
 
-            -- đọc ví beachball an toàn (leaderstats ưu tiên, thỉnh thoảng mới gọi remote)
             local cur = getBeachballsWalletOnlySafe()
 
-            -- nếu chưa có dữ liệu lần đầu => đặt mốc và bỏ qua
             if last == nil then
                 last = cur
             else
-                -- nếu không tăng (<=) thì kick
-                -- lưu ý: nếu bạn có mở crate làm giảm BB thì điều kiện này vẫn sẽ kick
                 if cur ~= nil and last ~= nil and cur <= last then
                     local msg = tostring(G.BB_WATCH_KICK_MSG or "No BeachBalls gained in the last period.")
                     pcall(function()
                         game:GetService("Players").LocalPlayer:Kick(msg)
                     end)
-                    -- sau khi Kick, thường script sẽ dừng; thoát vòng lặp để an toàn
                     break
                 else
-                    -- có tăng -> cập nhật mốc
                     last = cur
                 end
             end
