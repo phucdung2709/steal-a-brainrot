@@ -1,7 +1,5 @@
---===[ LOAD GUARD ]===--
 repeat task.wait() until game:IsLoaded()
 
---==================== CONFIG (ĐẶT Ở ĐẦU) ====================--
 getgenv().gagConfig = getgenv().gagConfig or {
     Debug          = true,
     AutoFarm       = true,
@@ -36,7 +34,7 @@ local DEFAULTS = {
     RECHECK_DISTANCE     = 8,
     HEIGHT_OFFSET        = 2.5,
     USE_FIRETOUCH        = true,
-    SCAN_METHOD          = "radius",   -- "radius" | "index"
+    SCAN_METHOD          = "radius",
     RADIUS_BLACKLIST_HRP = true,
     MAX_COINS_PER_TICK   = 10,
     STUCK_RESET_SEC      = 15,
@@ -62,8 +60,8 @@ local DEFAULTS = {
     BALANCE_LEADERSTATS_NAME = "leaderstats",
     BALANCE_KEYS         = { "BeachBall","BeachBalls","BeachBalls2025","Coins","Money","Cash","Tokens" },
     OPEN_ENABLE_LOOP     = true,
-    BB_WATCH_ENABLE      = true,
-    BB_WATCH_INTERVAL    = 300,   -- 5 phút
+    BB_WATCH_ENABLE      = true,     -- bật/tắt watchdog
+    BB_WATCH_INTERVAL    = 300,      -- 5 phút = 300 giây
     BB_WATCH_KICK_MSG    = "No BeachBalls gained in the last 5 minutes. Kicking...",
     OPEN_ARGS            = { "Summer2025Box", "MysteryBox", "BeachBalls2025" },
     OPEN_THRESHOLD       = 800,
@@ -74,94 +72,17 @@ local DEFAULTS = {
     OVERLAY_ON_AT_START  = true,
 }
 
---==================== SERVICES (DÙNG CHO CẢ 2 PHẦN) ====================--
 local Players              = game:GetService("Players")
-local ReplicatedStorage    = game:GetService("ReplicatedStorage")
 local Workspace            = game:GetService("Workspace")
 local RunService           = game:GetService("RunService")
 local VirtualInputManager  = game:GetService("VirtualInputManager")
+local ReplicatedStorage    = game:GetService("ReplicatedStorage")
 local Lighting             = game:GetService("Lighting")
 local SoundService         = game:GetService("SoundService")
 local HttpService          = game:GetService("HttpService")
 local Heartbeat            = RunService.Heartbeat
 
-local LP        = Players.LocalPlayer
-local PlayerGui = LP:WaitForChild("PlayerGui")
-
---==================== CHỌN PHONE (TỰ ĐỘNG, KHÔNG CHẶN MAIN) ====================--
-local function safeFireChangeLastDevice()
-    local ok, rem = pcall(function()
-        return ReplicatedStorage
-            :WaitForChild("Remotes", 2)
-            :WaitForChild("Extras", 2)
-            :WaitForChild("ChangeLastDevice", 2)
-    end)
-    if ok and rem then
-        rem:FireServer("Phone")
-    end
-end
-
-local function setDeviceAttribute()
-    pcall(function() PlayerGui:SetAttribute("Device", "Phone") end)
-end
-
-local function clickGuiButtonOnce(btn: GuiButton)
-    local ok = pcall(function() btn:Activate() end)
-    if not ok then
-        local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
-        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, btn, 0)
-        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, btn, 0)
-    end
-end
-
-local function clickGuiButtonTwice(btn: GuiButton)
-    clickGuiButtonOnce(btn)
-    task.wait(0.20)
-    clickGuiButtonOnce(btn)
-end
-
-local function selectPhoneNow(ds)
-    local ok, phoneBtn = pcall(function()
-        local container = ds:WaitForChild("Container", 5)
-        local phone     = container and container:WaitForChild("Phone", 5)
-        return phone and phone:WaitForChild("Button", 5)
-    end)
-    if ok and phoneBtn and phoneBtn:IsA("GuiButton") then
-        safeFireChangeLastDevice()
-        setDeviceAttribute()
-        clickGuiButtonTwice(phoneBtn)
-        return true
-    end
-    return false
-end
-
-local function startAutoSelectPhone()
-    task.defer(function()
-        local ds = PlayerGui:FindFirstChild("DeviceSelect")
-        if ds then selectPhoneNow(ds) end
-    end)
-    PlayerGui.ChildAdded:Connect(function(child)
-        if child.Name == "DeviceSelect" then
-            task.defer(function() selectPhoneNow(child) end)
-        end
-    end)
-    task.spawn(function()
-        for _ = 1, 50 do
-            task.wait(0.2)
-            if PlayerGui:GetAttribute("Device") ~= "Phone" then
-                safeFireChangeLastDevice()
-                local ds = PlayerGui:FindFirstChild("DeviceSelect")
-                if ds then selectPhoneNow(ds) end
-            else
-                break
-            end
-        end
-    end)
-end
-
-startAutoSelectPhone()
-
---==================== TOÀN BỘ SCRIPT CHÍNH (CHẠY NGAY) ====================--
+local LP = Players.LocalPlayer
 
 --==================== REMOTES / MODULES ====================--
 local openCrate   = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Shop"):WaitForChild("OpenCrate")
@@ -246,6 +167,7 @@ end
 local function readFromLeaderstats()
     local ls = LP:FindFirstChild("leaderstats")
     if not ls then return nil end
+
     for _, key in ipairs(BB_KEYS) do
         local val = ls:FindFirstChild(key)
         if val and (val:IsA("IntValue") or val:IsA("NumberValue") or val:IsA("StringValue")) then
@@ -260,24 +182,33 @@ local function attachLeaderstatsWatchers()
     local function connectValue(v)
         if not v then return end
         if not (v:IsA("IntValue") or v:IsA("NumberValue") or v:IsA("StringValue")) then return end
-        local function update() updateSticky(toNumber(v.Value)) end
+        local function update()
+            updateSticky(toNumber(v.Value))
+        end
         update()
         v:GetPropertyChangedSignal("Value"):Connect(update)
     end
 
     local function scan(ls)
         if not ls then return end
-        for _, k in ipairs(BB_KEYS) do connectValue(ls:FindFirstChild(k)) end
+        for _, k in ipairs(BB_KEYS) do
+            connectValue(ls:FindFirstChild(k))
+        end
         ls.ChildAdded:Connect(function(c)
             for _, k in ipairs(BB_KEYS) do
-                if c.Name == k then connectValue(c); break end
+                if c.Name == k then
+                    connectValue(c)
+                    break
+                end
             end
         end)
     end
 
     scan(LP:FindFirstChild("leaderstats"))
     LP.ChildAdded:Connect(function(c)
-        if c.Name == "leaderstats" then scan(c) end
+        if c.Name == "leaderstats" then
+            scan(c)
+        end
     end)
 end
 
@@ -291,46 +222,6 @@ local function startProfilePoller()
     end)
 end
 
--- Fallback: đọc số BeachBalls trực tiếp từ GUI theo G.BALANCE_GUI_SEGMENTS
-local function readFromGUIQuick()
-    local segs = G.BALANCE_GUI_SEGMENTS
-    if type(segs) ~= "table" or #segs == 0 then return nil end
-
-    local cur = Players.LocalPlayer
-    for _, name in ipairs(segs) do
-        if not cur then return nil end
-        if cur == Players.LocalPlayer and name == "PlayerGui" then
-            cur = cur:FindFirstChildOfClass("PlayerGui") or cur:FindFirstChild("PlayerGui")
-        else
-            cur = cur:FindFirstChild(name)
-        end
-        if not cur then return nil end
-    end
-
-local function parseText(node)
-    local s = ""
-    local ok, txt = pcall(function() return node.Text end)
-    if ok and type(txt) == "string" then
-        s = txt
-    end
-    local digits = s:gsub("[^%d]", "")
-    if digits ~= "" then
-        return tonumber(digits)
-    end
-end
-
-
-    if cur:IsA("TextLabel") or cur:IsA("TextButton") then
-        local n = parseText(cur); if n then return n end
-    end
-    for _, d in ipairs(cur:GetDescendants()) do
-        if d:IsA("TextLabel") or d:IsA("TextButton") then
-            local n = parseText(d); if n then return n end
-        end
-    end
-    return nil
-end
-
 local function getBeachballsWalletOnly()
     if LAST_WALLET_BB ~= nil then return LAST_WALLET_BB end
     local ls = readFromLeaderstats()
@@ -341,40 +232,35 @@ local function getBeachballsWalletOnly()
 end
 
 local function getBeachballsWalletOnlySafe()
-    -- 1) leaderstats trước
     local ls = readFromLeaderstats()
-    if ls ~= nil then updateSticky(ls) return ls end
-
-    -- 2) throttled remote
+    if ls ~= nil then
+        updateSticky(ls)
+        return ls
+    end
     if os.clock() - __lastRemoteAt > 10 then
         __lastRemoteAt = os.clock()
         local rf = readFromProfile()
-        if rf ~= nil then updateSticky(rf) return rf end
+        if rf ~= nil then
+            updateSticky(rf)
+            return rf
+        end
     end
-
-    -- 3) GUI fallback
-    local gv = readFromGUIQuick()
-    if gv ~= nil then updateSticky(gv) return gv end
-
-    -- 4) cache
     return LAST_WALLET_BB
 end
 
 do
     attachLeaderstatsWatchers()
     startProfilePoller()
-    task.delay(3, function()
-        local count = getBeachballsWalletOnlySafe()
-        if count ~= nil then
-            print(string.format("[BB] BeachBalls (wallet): %d", count))
-        else
-            warn("[BB] Không đọc được BeachBalls ví (remote/leaderstats/gui).")
-        end
-    end)
+    local count = getBeachballsWalletOnly()
+    if count ~= nil then
+        print(string.format("[BB] BeachBalls (wallet): %d", count))
+    else
+        warn("[BB] Không đọc được BeachBalls ví (remote/leaderstats).")
+    end
 end
 
 getgenv().GetBeachballCount = function()
-    local n = getBeachballsWalletOnlySafe()
+    local n = getBeachballsWalletOnly()
     if n ~= nil then
         print(string.format("[BB] BeachBalls (wallet): %d", n))
     else
@@ -387,6 +273,7 @@ end
 local function matchesName(partName)
     local names = G.COIN_NAMES or {}
     local mode  = (G.NAME_MATCH_MODE or "contains"):lower()
+
     for _, key in ipairs(names) do
         if typeof(key) == "string" then
             if mode == "exact"   and partName == key                 then return true end
@@ -408,11 +295,14 @@ end
 local function selectTouchTarget(rootPart)
     if not G.SCAN_DESC_TOUCH then return rootPart end
     if rootPart:FindFirstChild("TouchInterest") then return rootPart end
+
     local best, scoreBest = rootPart, 0
     for _, d in ipairs(rootPart:GetDescendants()) do
         if d:IsA("BasePart") then
             local sc = (d:FindFirstChild("TouchInterest") and 10 or 0) + (d.Size.X + d.Size.Y + d.Size.Z)
-            if sc > scoreBest then best, scoreBest = d, sc end
+            if sc > scoreBest then
+                best, scoreBest = d, sc
+            end
         end
     end
     return best
@@ -432,13 +322,19 @@ local function addIfCoin(inst)
         inst.AncestryChanged:Connect(function(_, parent)
             if not parent then CoinSet[inst] = nil end
         end)
-        pcall(function() inst.Destroying:Connect(function() CoinSet[inst] = nil end) end)
+        pcall(function()
+            inst.Destroying:Connect(function()
+                CoinSet[inst] = nil
+            end)
+        end)
     end
 end
 
 local function buildIndexFull()
     CoinSet = {}
-    for _, d in ipairs(Workspace:GetDescendants()) do addIfCoin(d) end
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        addIfCoin(d)
+    end
     dbg("Indexed coins:", (next(CoinSet) and "ok") or "empty")
 end
 
@@ -491,10 +387,12 @@ local UnderAnchorCFrame, UnderActive = nil, false
 local function setupUnderAnchor()
     local here = safeHRPPos()
     if not here then return end
+
     UnderAnchorCFrame = CFrame.new(here.X, here.Y - (G.UNDER_HEIGHT or 100), here.Z)
     HRP.Anchored = true
     HRP.CFrame  = UnderAnchorCFrame
     UnderActive = true
+
     dbg(string.format("Underground anchor @Y-%d", G.UNDER_HEIGHT or 100))
 end
 
@@ -507,6 +405,7 @@ end
 
 --==================== TOUCH HELPERS ====================--
 local firetouch = rawget(getfenv and getfenv() or {}, "firetouchinterest") or _G.firetouchinterest
+
 local function fireTouchPair(a, b)
     if not firetouch or not G.USE_FIRETOUCH then return end
     pcall(function() firetouch(a, b, 0) end); Heartbeat:Wait()
@@ -529,15 +428,21 @@ end
 local function overlappedWithTarget(target)
     if not G.OVERLAP_VERIFY then return true end
     if not HRP or not target then return false end
+
     local pad  = G.OVERLAP_BOX_PAD or Vector3.new(2,2,2)
     local size = HRP.Size + pad
+
     local params = OverlapParams.new()
     params.FilterType = Enum.RaycastFilterType.Whitelist
     params.FilterDescendantsInstances = { target }
+
     local parts = Workspace:GetPartBoundsInBox(HRP.CFrame, size, params)
     if not parts then return false end
+
     for _, p in ipairs(parts) do
-        if p == target or p:IsDescendantOf(target) then return true end
+        if p == target or p:IsDescendantOf(target) then
+            return true
+        end
     end
     return false
 end
@@ -547,14 +452,8 @@ local function resolveFromLocalPlayer(segments)
     local cur = Players.LocalPlayer
     for _, name in ipairs(segments) do
         if not cur then return nil end
-        local nextObj
-        if cur == Players.LocalPlayer and name == "PlayerGui" then
-            nextObj = cur:FindFirstChildOfClass("PlayerGui") or cur:FindFirstChild("PlayerGui")
-        else
-            nextObj = cur:FindFirstChild(name)
-        end
-        if not nextObj then return nil end
-        cur = nextObj
+        cur = cur:FindFirstChild(name)
+        if not cur then return nil end
     end
     return cur
 end
@@ -569,6 +468,7 @@ end
 local function makeGuiBalanceReader()
     local segs = G.BALANCE_GUI_SEGMENTS
     if type(segs) ~= "table" or #segs == 0 then return nil end
+
     local root = resolveFromLocalPlayer(segs)
     if not root then return nil end
 
@@ -588,7 +488,9 @@ local function makeGuiBalanceReader()
     for _, d in ipairs(root:GetDescendants()) do
         if d:IsA("TextLabel") or d:IsA("TextButton") then best = d; break end
     end
-    if best then return function() return parseNumberFromText(best.Text) or 0 end end
+    if best then
+        return function() return parseNumberFromText(best.Text) or 0 end
+    end
 
     for _, d in ipairs(root:GetDescendants()) do
         if d:IsA("NumberValue") or d:IsA("IntValue") then
@@ -601,6 +503,7 @@ end
 local function makeLeaderstatsBalanceReader()
     local ls = Players.LocalPlayer:FindFirstChild(G.BALANCE_LEADERSTATS_NAME or "leaderstats")
     if not ls then return nil end
+
     local keys = G.BALANCE_KEYS or { "Coins" }
     for _, k in ipairs(keys) do
         local v = ls:FindFirstChild(k)
@@ -612,6 +515,7 @@ local function makeLeaderstatsBalanceReader()
 end
 
 local BAL_GETTER
+
 local function ensureBalanceGetter()
     BAL_GETTER = makeGuiBalanceReader()
     if not BAL_GETTER and not G.BALANCE_ONLY then
@@ -622,18 +526,23 @@ end
 
 local function ensureBalanceReady(timeout)
     if not G.BALANCE_DETECT then return true end
+
     local tmax = timeout or (G.BALANCE_READY_TIMEOUT or 5)
     local t0   = os.clock()
+
     repeat
         if ensureBalanceGetter() then return true end
         task.wait(0.2)
     until os.clock() - t0 > tmax
+
     return false
 end
 
 local function getBalanceNow()
     if not G.BALANCE_DETECT then return nil end
-    if not BAL_GETTER then if not ensureBalanceReady() then return nil end end
+    if not BAL_GETTER then
+        if not ensureBalanceReady() then return nil end
+    end
     local ok, val = pcall(BAL_GETTER)
     if not ok then return nil end
     return tonumber(val) or 0
@@ -641,35 +550,46 @@ end
 
 local function waitForBalanceIncrease(prev)
     if not G.BALANCE_DETECT then return false end
+
     local minDelta = G.BALANCE_DELTA_MIN or 1
     local window   = G.BALANCE_OBS_WINDOW or 1.2
     local poll     = G.BALANCE_POLL or 0.05
+
     local t0 = os.clock()
     while os.clock() - t0 <= window do
         task.wait(poll)
         local cur = getBalanceNow()
-        if cur and prev and (cur - prev) >= minDelta then return true end
+        if cur and prev and (cur - prev) >= minDelta then
+            return true
+        end
     end
     return false
 end
 
 --==================== FAIL / COOLDOWN ====================--
 local FailMap = {}
+
 local function inCooldown(coin)
     local f = FailMap[coin]
     return f and f.until_ts and (os.clock() < f.until_ts)
 end
+
 local function addFail(coin)
     local f = FailMap[coin] or { count = 0, until_ts = 0 }
     f.count = f.count + 1
+
     if f.count >= (G.MAX_FAIL_PER_VISIT or 2) then
         f.until_ts = os.clock() + (G.FAIL_COOLDOWN_SEC or 8)
         f.count    = 0
         dbg("Cooldown coin for", math.floor(G.FAIL_COOLDOWN_SEC or 8), "s:", coin:GetFullName())
     end
+
     FailMap[coin] = f
 end
-local function clearFail(coin) FailMap[coin] = nil end
+
+local function clearFail(coin)
+    FailMap[coin] = nil
+end
 
 --==================== JOB / TELEPORT ====================--
 local CURRENT_JOB = 0
@@ -713,12 +633,14 @@ local function teleportToCoin_job(coin, jobId)
     if useBalance and balBefore then
         success = waitForBalanceIncrease(balBefore)
     end
+
     if not success and not G.BALANCE_ONLY then
         if not target.Parent then
             success = true
         else
             local startY = target.Position.Y
             local t0j    = os.clock()
+
             while os.clock() - t0j <= (G.JUMP_WINDOW or 0.4) and target.Parent do
                 task.wait(0.03)
                 if (target.Position.Y - startY) >= (G.JUMP_DELTA_Y or 2.0) then
@@ -726,20 +648,21 @@ local function teleportToCoin_job(coin, jobId)
                     break
                 end
             end
-            if not success and overlappedWithTarget(target) then success = true end
+
+            if not success and overlappedWithTarget(target) then
+                success = true
+            end
         end
     end
 
     if success then clearFail(coin) else addFail(coin) end
 
-    if jobActive(jobId) then
-        if UnderAnchorCFrame then
-            HRP.Anchored = true
-            stopVelocity()
-            HRP.CFrame = UnderAnchorCFrame
-        else
-            stopVelocity()
-        end
+    if UnderAnchorCFrame and jobActive(jobId) then
+        HRP.Anchored = true
+        stopVelocity()
+        HRP.CFrame = UnderAnchorCFrame
+    else
+        stopVelocity()
     end
 
     return success
@@ -747,9 +670,11 @@ end
 
 --==================== ANTI-AFK ====================--
 local antiAFKThread
+
 local function startAntiAFK()
     if antiAFKThread or not G.ANTIAFK then return end
     dbg("Anti-AFK started")
+
     antiAFKThread = task.spawn(function()
         while G.ANTIAFK do
             task.wait(60)
@@ -764,11 +689,12 @@ end
 
 --==================== OPTIMIZER ====================--
 local function isCharacterDescendant(inst) return Character and inst:IsDescendantOf(Character) end
-local function isCoinPart(inst) return inst:IsA("BasePart") and matchesName(inst.Name) end
+local function isCoinPart(inst)         return inst:IsA("BasePart") and matchesName(inst.Name) end
 
 local function killVisualCosts()
     if not G.OPTIMIZE then return end
     dbg("Optimize mode: reducing graphics (safe)")
+
     pcall(function()
         Lighting.GlobalShadows = false
         Lighting.FogStart, Lighting.FogEnd = 0, 50
@@ -778,6 +704,7 @@ local function killVisualCosts()
         local atmos = Lighting:FindFirstChildOfClass("Atmosphere")
         if atmos then atmos.Density = 0 end
     end)
+
     pcall(function()
         local t = Workspace:FindFirstChildOfClass("Terrain")
         if t then
@@ -788,12 +715,17 @@ local function killVisualCosts()
             t.Decoration = false
         end
     end)
+
     pcall(function()
         SoundService.Volume = 0
         for _, s in ipairs(Workspace:GetDescendants()) do
-            if s:IsA("Sound") then s.Volume = 0; s.Playing = false end
+            if s:IsA("Sound") then
+                s.Volume = 0
+                s.Playing = false
+            end
         end
     end)
+
     for _, inst in ipairs(Workspace:GetDescendants()) do
         if inst:IsA("BasePart") then
             if not isCharacterDescendant(inst) and not isCoinPart(inst) then
@@ -807,7 +739,9 @@ local function killVisualCosts()
                 pcall(function() inst.LocalTransparencyModifier = 0 end)
             end
         elseif inst:IsA("Decal") or inst:IsA("Texture") then
-            if not isCharacterDescendant(inst) then pcall(function() inst.Transparency = 1 end) end
+            if not isCharacterDescendant(inst) then
+                pcall(function() inst.Transparency = 1 end)
+            end
         elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
             or inst:IsA("Explosion") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
             pcall(function() inst.Enabled = false end)
@@ -815,6 +749,7 @@ local function killVisualCosts()
             pcall(function() inst.Enabled = false end)
         end
     end
+
     Workspace.DescendantAdded:Connect(function(inst)
         task.defer(function()
             if inst:IsA("BasePart") then
@@ -844,24 +779,30 @@ local function killVisualCosts()
     end)
 end
 
---==================== FARM LOOP (ONE-SHOT) ====================--
+--==================== FARM LOOP (ONE-SHOT STYLE) ====================--
 local farmRunning = false
+
 local function runFarm()
     if not G.AUTOCOLLECT then return end
     if farmRunning then return end
+
     farmRunning = true
 
     if (G.SCAN_METHOD or "radius") == "index" then
         buildIndexFull()
         lastHardRescan = os.clock()
     end
+
     dbg("Farm started (scan=", G.SCAN_METHOD or "radius", ", oneshot)")
 
     local lastProgress = os.clock()
+
     while G.AUTOCOLLECT do
         if (not Character) or (not Character.Parent) or (not HRP) or (not HRP.Parent) or (not Humanoid) or Humanoid.Health <= 0 then
             dbg("Character refresh...")
-            refreshCharacter(); resetUnderAnchor(); task.wait(0.4)
+            refreshCharacter()
+            resetUnderAnchor()
+            task.wait(0.4)
         end
 
         if (G.SCAN_METHOD or "radius") == "index" then
@@ -878,7 +819,9 @@ local function runFarm()
                 buildIndexFull()
                 lastHardRescan = os.clock()
             end
-            newJob(); task.wait(0.2); lastProgress = os.clock()
+            newJob()
+            task.wait(0.2)
+            lastProgress = os.clock()
         end
 
         local origin = (UnderAnchorCFrame and UnderAnchorCFrame.Position) or (safeHRPPos() or Vector3.new())
@@ -889,12 +832,17 @@ local function runFarm()
             task.wait(G.RESCAN_INTERVAL or 1.2)
         else
             if G.UNDERGROUND_MODE and not UnderActive then
-                setupUnderAnchor(); origin = UnderAnchorCFrame.Position
+                setupUnderAnchor()
+                origin = UnderAnchorCFrame.Position
             end
-            local jobId, processed = newJob(), 0
+
+            local jobId    = newJob()
+            local processed= 0
+
             for _, coin in ipairs(coins) do
                 if not G.AUTOCOLLECT or not jobActive(jobId) then break end
                 if processed >= (G.MAX_COINS_PER_TICK or 10) then break end
+
                 if coinIsCollectible(coin) and not inCooldown(coin) then
                     local ok = teleportToCoin_job(coin, jobId)
                     processed = processed + 1
@@ -902,10 +850,14 @@ local function runFarm()
                     if ok then lastProgress = os.clock() end
                 end
             end
+
             if processed == 0 then task.wait(0.15) end
         end
     end
-    dbg("Farm stopped"); resetUnderAnchor(); farmRunning = false
+
+    dbg("Farm stopped")
+    resetUnderAnchor()
+    farmRunning = false
 end
 
 --==================== CRATE DATA (STATIC) ====================--
@@ -923,34 +875,50 @@ local CRATE_ITEMS = {
     {Name="Sunrise",         Type="Gun",   Rarity="Godly",     Percent=0.2},
     {Name="Chroma Sunrise",  Type="Gun",   Rarity="Godly",     Percent=0.2},
 }
-local CRATE_INDEX = {}; for _, it in ipairs(CRATE_ITEMS) do CRATE_INDEX[it.Name] = it end
-local function fmtPercent(v) if type(v)~="number" then return tostring(v) end if v%1==0 then return string.format("%d%%",v) end return tostring(v).. "%" end
+
+local CRATE_INDEX = {}
+for _, it in ipairs(CRATE_ITEMS) do CRATE_INDEX[it.Name] = it end
+
+local function fmtPercent(v)
+    if type(v) ~= "number" then return tostring(v) end
+    if v % 1 == 0 then return string.format("%d%%", v) end
+    return tostring(v) .. "%"
+end
 
 --==================== INVENTORY SNAPSHOT ====================--
-local CATEGORIES = { "Weapons","Effects","Perks","Emotes","Radios","Pets" }
-local KEY_OR_VALUE_FOR = { Weapons = true, Pets = true }
+local CATEGORIES          = { "Weapons","Effects","Perks","Emotes","Radios","Pets" }
+local KEY_OR_VALUE_FOR    = { Weapons = true, Pets = true }
+
 local function getItemInfo(cat, id)
     local db = (cat == "Emotes" and Sync.Emotes) or (cat == "Toys" and Sync.Toys) or Sync[cat]
     return db and db[id] or nil
 end
+
 local function displayNameOf(cat, id)
     local info = getItemInfo(cat, id)
     return (info and (info.ItemName or info.DisplayName or info.Name)) or tostring(id)
 end
+
 local function resolveUniqueWeaponID(u)
     local baseId = u.BaseItem
     if not u.EvoEquipped then return baseId end
+
     local baseInfo = Sync.Weapons[baseId]
     if not baseInfo or not baseInfo.Evo then return baseId end
-    local xp, stage = u.XP or 0, 1
+
+    local xp    = u.XP or 0
+    local stage = 1
     if baseInfo.Evo[2] and xp >= baseInfo.Evo[2].XPRequired then stage = 2 end
     if baseInfo.Evo[3] and xp >= baseInfo.Evo[3].XPRequired then stage = 3 end
     if baseInfo.Evo[4] and xp >= baseInfo.Evo[4].XPRequired then stage = 4 end
+
     local evo = baseInfo.Evo[stage]
     return (evo and evo.ItemName) or baseId
 end
+
 local function snapshotInventoryFlat()
     local flat = {}
+
     for _, cat in ipairs(CATEGORIES) do
         local owned = ProfileData[cat] and ProfileData[cat].Owned
         if owned then
@@ -962,6 +930,7 @@ local function snapshotInventoryFlat()
             end
         end
     end
+
     if ProfileData.Uniques then
         for _, u in pairs(ProfileData.Uniques) do
             local wid  = resolveUniqueWeaponID(u)
@@ -969,8 +938,10 @@ local function snapshotInventoryFlat()
             flat[name] = (flat[name] or 0) + 1
         end
     end
+
     return flat
 end
+
 local function diffAdded(prev, cur)
     local added = {}
     for name, c in pairs(cur) do
@@ -982,82 +953,84 @@ end
 
 --==================== WEBHOOKS ====================--
 local __lastWebhookAt = 0
-local function getRequester() return (syn and syn.request) or http_request or request end
-local RARITY_COLOR = { Common=0x9aa0a6, Uncommon=0x34a853, Rare=0x4285f4, Legendary=0xfbbc04, Godly=0xdb4437, Default=0x9aa0a6 }
+local function getRequester()
+    return (syn and syn.request) or http_request or request
+end
+
+local RARITY_COLOR = {
+    Common    = 0x9aa0a6,
+    Uncommon  = 0x34a853,
+    Rare      = 0x4285f4,
+    Legendary = 0xfbbc04,
+    Godly     = 0xdb4437,
+    Default   = 0x9aa0a6
+}
+
 local function shouldSendPrivate(itemName)
     local sel = (getgenv().gagConfig.WEBHOOK_SELECT or {}).Private or {}
     return sel[itemName] == true
 end
+
 local function shouldSendPublic(itemName)
     if not PUBLIC_WH_ENABLED then return false end
     return PUBLIC_SELECT[itemName] == true
 end
+
 local function collectWebhookUrlsFor(itemName)
     local urls = {}
+
     local priv = tostring(getgenv().gagConfig.PrivateWebhook or "")
-    if priv ~= "" and shouldSendPrivate(itemName) then table.insert(urls, priv) end
+    if priv ~= "" and shouldSendPrivate(itemName) then
+        table.insert(urls, priv)
+    end
+
     if PUBLIC_WH_ENABLED and PUBLIC_WEBHOOK and PUBLIC_WEBHOOK ~= "" and shouldSendPublic(itemName) then
         table.insert(urls, PUBLIC_WEBHOOK)
     end
+
     return urls
 end
+
 local function sendDiscordPayload(urls, payload)
-    if type(urls) == "string" then urls = { urls } end
-    if type(urls) ~= "table" or #urls == 0 then return end
-
     local req = getRequester()
-    if not req then return end
-
-    local okEncode, bodyStr = pcall(function()
-        return HttpService:JSONEncode(payload)
-    end)
-    if not okEncode or type(bodyStr) ~= "string" then
-        warn("[WH] JSON encode failed")
+    if not req then
+        warn("[WH] Executor không hỗ trợ http_request/syn.request/request")
         return
     end
+    if #urls == 0 then return end
 
-    local headers = { ["Content-Type"] = "application/json" }
-
-    local function doPost(url)
-        return pcall(function()
-            return req({ Url = url, Method = "POST", Headers = headers, Body = bodyStr })
-        end)
-    end
+    local dt = os.clock() - __lastWebhookAt
+    if dt < 0.6 then task.wait(0.6 - dt) end
 
     for _, url in ipairs(urls) do
-        local dt = os.clock() - __lastWebhookAt
-        if dt < 0.6 then task.wait(0.6 - dt) end
-
-        local ok, res = doPost(url)
-        if (not ok) or (res and res.StatusCode == 429) then
-            local backoff = 1.5
-            if res and res.Headers and res.Headers["Retry-After"] then
-                local ra = tonumber(res.Headers["Retry-After"])
-                if ra and ra > 0 and ra < 10 then backoff = ra end
-            end
-            task.wait(backoff)
-            ok, res = doPost(url)
-        end
+        local ok, res = pcall(function()
+            return req({
+                Url     = url,
+                Method  = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body    = HttpService:JSONEncode(payload)
+            })
+        end)
 
         if ok and res and res.StatusCode and res.StatusCode >= 200 and res.StatusCode < 300 then
-            print("[WH] OK:", url, res.StatusCode)
+            print("[WH] OK:", url)
         else
-            local code = res and res.StatusCode
-            local msg  = res and (res.StatusMessage or res.Body)
-            warn("[WH] FAIL:", url, code, msg)
+            warn("[WH] FAIL:", url, res and res.StatusCode, res and res.StatusMessage)
         end
-
-        __lastWebhookAt = os.clock()
     end
+
+    __lastWebhookAt = os.clock()
 end
 
 local function sendItemWebhook(itemName, jobId)
     local urls = collectWebhookUrlsFor(itemName)
     if #urls == 0 then return end
+
     local info    = CRATE_INDEX[itemName] or {}
     local rarity  = info.Rarity or "?"
     local percent = info.Percent
     local dtype   = info.Type or "?"
+
     local embed = {
         title       = "🎁 Opened: " .. tostring(itemName),
         description = table.concat({
@@ -1067,42 +1040,77 @@ local function sendItemWebhook(itemName, jobId)
         }, "\n"),
         color   = (RARITY_COLOR[rarity] or RARITY_COLOR.Default),
         author  = { name = string.format("@%s • %s", Players.LocalPlayer.Name, Players.LocalPlayer.DisplayName) },
-        thumbnail = { url = string.format("https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=150&height=150&format=png", Players.LocalPlayer.UserId) },
+        thumbnail = {
+            url = string.format("https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=150&height=150&format=png",
+                                Players.LocalPlayer.UserId)
+        },
         footer = { text = string.format("Job %s • %s UTC", tostring(jobId), os.date("!%Y-%m-%d %H:%M:%S")) },
     }
-    local payload = { username = string.format("CrateBot • %s", Players.LocalPlayer.DisplayName), embeds = { embed } }
+
+    local payload = {
+        username = string.format("CrateBot • %s", Players.LocalPlayer.DisplayName),
+        embeds   = { embed }
+    }
+
     sendDiscordPayload(urls, payload)
 end
 
 --==================== OPEN LOOP ====================--
 local OPEN_JOB_ID = 0
 local function nextOpenJob() OPEN_JOB_ID = OPEN_JOB_ID + 1 return OPEN_JOB_ID end
+
 getgenv().GAG_CratesOpened = getgenv().GAG_CratesOpened or 0
+
 local function runOpenByThreshold()
     if not G.OPEN_ENABLE_LOOP then return end
+
     local ARGS = G.OPEN_ARGS or { "Summer2025Box" }
     local TH   = tonumber(G.OPEN_THRESHOLD or 800) or 800
+
     log("Crate auto-open by WALLET threshold >= " .. tostring(TH))
+
     while true do
         local bb = getBeachballsWalletOnlySafe()
         if bb and bb >= TH then
             local jobId = nextOpenJob()
+
             local prev  = snapshotInventoryFlat()
-            local ok, res = pcall(function() return openCrate:InvokeServer(unpack(ARGS)) end)
+            local ok, res = pcall(function()
+                return openCrate:InvokeServer(unpack(ARGS))
+            end)
+
             if ok then
                 getgenv().GAG_CratesOpened = (tonumber(getgenv().GAG_CratesOpened) or 0) + 1
                 log("Opened crate:", table.concat(ARGS, ", "))
             else
                 warnl("Open crate failed:", tostring(res))
             end
-            local timeout, poll, t0, sentAny = G.OBS_TIMEOUT_SEC or 3.0, G.OBS_POLL_SEC or 0.15, os.clock(), false
+
+            local timeout = G.OBS_TIMEOUT_SEC or 3.0
+            local poll    = G.OBS_POLL_SEC or 0.15
+            local t0      = os.clock()
+            local sentAny = false
+
             repeat
                 task.wait(poll)
-                local added, any = diffAdded(prev, snapshotInventoryFlat()), false
-                for name, _delta in pairs(added) do any = true; sendItemWebhook(name, jobId) end
-                if any then sentAny = true break end
+                local added = diffAdded(prev, snapshotInventoryFlat())
+                local any   = false
+
+                for name, _delta in pairs(added) do
+                    any = true
+                    sendItemWebhook(name, jobId)
+                end
+
+                if any then
+                    sentAny = true
+                    break
+                end
             until (os.clock() - t0) > timeout
-            if not sentAny then log("No new item detected within window.") end
+
+            if not sentAny then
+                log("No new item detected within window.")
+            end
+
             task.wait(0.6)
         else
             task.wait(0.6)
@@ -1117,12 +1125,16 @@ local function createOverlay()
     gui.IgnoreGuiInset = true
     gui.ResetOnSpawn   = false
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    local ok = pcall(function() gui.Parent = game:GetService("CoreGui") end)
+
+    local ok = pcall(function()
+        gui.Parent = game:GetService("CoreGui")
+    end)
     if not ok then
         local pg = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui")
         gui.Parent = pg
     end
 
+    -- blackout layer
     local blackout = Instance.new("Frame")
     blackout.Name = "Blackout"
     blackout.BackgroundColor3       = Color3.new(0,0,0)
@@ -1133,6 +1145,7 @@ local function createOverlay()
     blackout.ZIndex   = 10
     blackout.Parent   = gui
 
+    -- account label
     local label = Instance.new("TextLabel")
     label.Name = "AccountName"
     label.AnchorPoint = Vector2.new(0.5,0.5)
@@ -1148,6 +1161,7 @@ local function createOverlay()
     label.ZIndex = 11
     label.Parent = blackout
 
+    -- toggle button
     local btn = Instance.new("TextButton")
     btn.Name = "ToggleOverlay"
     btn.AnchorPoint = Vector2.new(1,0)
@@ -1162,30 +1176,50 @@ local function createOverlay()
     btn.ZIndex      = 20
     btn.Parent      = gui
 
-    local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0,8); corner.Parent = btn
-    local stroke = Instance.new("UIStroke"); stroke.Thickness = 1; stroke.Color = Color3.fromRGB(90,90,90); stroke.Parent = btn
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0,8)
+    corner.Parent = btn
 
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1
+    stroke.Color     = Color3.fromRGB(90,90,90)
+    stroke.Parent    = btn
+
+    -- toggle logic
     local overlayOn = G.OVERLAY_ON_AT_START ~= false
+
     local function setOverlay(v)
-        overlayOn = v
-        blackout.Visible = v
+        overlayOn       = v
+        blackout.Visible= v
+
         local big     = blackout:FindFirstChild("BeachballHUD_Big")
         local crates  = blackout:FindFirstChild("CrateHUD_Big")
         local compact = gui:FindFirstChild("BeachballHUD_Compact")
+
         if big     then big.Visible     = v end
         if crates  then crates.Visible  = v end
         if compact then compact.Visible = not v end
+
         btn.Text = v and "GUI: ON" or "GUI: OFF"
     end
 
     pcall(function()
         game:GetService("UserInputService").InputBegan:Connect(function(input, gp)
             if gp then return end
-            if input.KeyCode == Enum.KeyCode.RightShift then setOverlay(not overlayOn) end
+            if input.KeyCode == Enum.KeyCode.RightShift then
+                setOverlay(not overlayOn)
+            end
         end)
     end)
-    getgenv().ToggleGAGUI = function(v) if typeof(v)=="boolean" then setOverlay(v) else setOverlay(not overlayOn) end end
-    btn.MouseButton1Click:Connect(function() setOverlay(not overlayOn) end)
+
+    getgenv().ToggleGAGUI = function(v)
+        if typeof(v) == "boolean" then setOverlay(v) else setOverlay(not overlayOn) end
+    end
+
+    btn.MouseButton1Click:Connect(function()
+        setOverlay(not overlayOn)
+    end)
+
     setOverlay(overlayOn)
     return gui
 end
@@ -1198,8 +1232,10 @@ local function startBeachballHUD()
         gui = pg:FindFirstChild("GAG_Overlay")
     end
     if not gui then gui = createOverlay() end
+
     local blackout = gui:FindFirstChild("Blackout")
 
+    -- Big Beachball value
     local big = blackout and blackout:FindFirstChild("BeachballHUD_Big")
     if not big and blackout then
         big = Instance.new("TextLabel")
@@ -1220,6 +1256,7 @@ local function startBeachballHUD()
         big.Parent = blackout
     end
 
+    -- Big crates opened
     local cratesBig = blackout and blackout:FindFirstChild("CrateHUD_Big")
     if not cratesBig and blackout then
         cratesBig = Instance.new("TextLabel")
@@ -1240,6 +1277,7 @@ local function startBeachballHUD()
         cratesBig.Parent = blackout
     end
 
+    -- Compact card (shows when blackout hidden)
     local card = gui:FindFirstChild("BeachballHUD_Compact")
     if not card then
         card = Instance.new("Frame")
@@ -1250,10 +1288,17 @@ local function startBeachballHUD()
         card.BackgroundColor3 = Color3.fromRGB(20,20,20)
         card.BorderSizePixel  = 0
         card.ZIndex           = 25
+        card.Visible          = not blackout.Visible
         card.Parent           = gui
 
-        local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 8); corner.Parent = card
-        local stroke = Instance.new("UIStroke"); stroke.Thickness = 1; stroke.Color = Color3.fromRGB(90,90,90); stroke.Parent = card
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 8)
+        corner.Parent = card
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Thickness = 1
+        stroke.Color     = Color3.fromRGB(90,90,90)
+        stroke.Parent    = card
 
         local txt = Instance.new("TextLabel")
         txt.Name = "Value"
@@ -1269,8 +1314,10 @@ local function startBeachballHUD()
         txt.Text       = "🏖️ BeachBalls: …  |  🎁 Crates: 0"
         txt.Parent     = card
     end
+
     local compactLabel = card:FindFirstChild("Value")
 
+    -- Live updater
     task.spawn(function()
         local lastShownBig, lastShownSmall, lastCratesBig = nil, nil, nil
         while true do
@@ -1278,19 +1325,30 @@ local function startBeachballHUD()
             local bbText  = (n ~= nil) and ("🏖️ BeachBalls: " .. tostring(n))
                              or ((LAST_WALLET_BB ~= nil) and ("🏖️ BeachBalls: " .. tostring(LAST_WALLET_BB))
                                  or "🏖️ BeachBalls: …")
+
             local crates     = tonumber(getgenv().GAG_CratesOpened) or 0
             local cratesText = "🎁 Crates opened: " .. tostring(crates)
 
-            if big and bbText ~= lastShownBig then big.Text = bbText; lastShownBig = bbText end
-            if cratesBig and cratesText ~= lastCratesBig then cratesBig.Text = cratesText; lastCratesBig = cratesText end
+            if big and bbText ~= lastShownBig then
+                big.Text = bbText
+                lastShownBig = bbText
+            end
+
+            if cratesBig and cratesText ~= lastCratesBig then
+                cratesBig.Text = cratesText
+                lastCratesBig  = cratesText
+            end
 
             local smallText = bbText .. "  |  🎁 Crates: " .. tostring(crates)
-            if compactLabel and smallText ~= lastShownSmall then compactLabel.Text = smallText; lastShownSmall = smallText end
+            if compactLabel and smallText ~= lastShownSmall then
+                compactLabel.Text = smallText
+                lastShownSmall    = smallText
+            end
+
             task.wait(1.0)
         end
     end)
 end
-
 --==================== BEACHBALL WATCHDOG (5p) ====================--
 local function startBeachballWatchdog()
     if not G.BB_WATCH_ENABLE then return end
@@ -1299,15 +1357,25 @@ local function startBeachballWatchdog()
         while true do
             local interval = tonumber(G.BB_WATCH_INTERVAL or 300) or 300
             task.wait(interval)
+
+            -- đọc ví beachball an toàn (leaderstats ưu tiên, thỉnh thoảng mới gọi remote)
             local cur = getBeachballsWalletOnlySafe()
+
+            -- nếu chưa có dữ liệu lần đầu => đặt mốc và bỏ qua
             if last == nil then
                 last = cur
             else
+                -- nếu không tăng (<=) thì kick
+                -- lưu ý: nếu bạn có mở crate làm giảm BB thì điều kiện này vẫn sẽ kick
                 if cur ~= nil and last ~= nil and cur <= last then
                     local msg = tostring(G.BB_WATCH_KICK_MSG or "No BeachBalls gained in the last period.")
-                    pcall(function() Players.LocalPlayer:Kick(msg) end)
+                    pcall(function()
+                        game:GetService("Players").LocalPlayer:Kick(msg)
+                    end)
+                    -- sau khi Kick, thường script sẽ dừng; thoát vòng lặp để an toàn
                     break
                 else
+                    -- có tăng -> cập nhật mốc
                     last = cur
                 end
             end
@@ -1320,5 +1388,6 @@ if G.OPTIMIZE    then task.defer(killVisualCosts)  end
 if G.ANTIAFK     then task.defer(startAntiAFK)     end
 if G.AUTOCOLLECT then task.defer(runFarm)          end
 task.defer(startBeachballWatchdog)
+task.defer(createOverlay)
 task.defer(startBeachballHUD)
 task.defer(runOpenByThreshold)
