@@ -117,7 +117,7 @@ do
         end
     end
 
-    local function trySelectOn(containerParent)
+    local function trySelectOn(containerParent) -- removed `: Instance?`
         local ok, tabletBtn = pcall(function()
             local container = containerParent and containerParent:WaitForChild("Container", 5)
             local tablet    = container and container:WaitForChild("Tablet", 5)
@@ -413,7 +413,7 @@ local function getNearbyCoins_index(originPos, limit)
     end
     table.sort(CoinList, function(a, b)
         return dist(originPos, a.Position) < dist(originPos, b.Position)
-    end))
+    end)
     return CoinList
 end
 
@@ -430,7 +430,7 @@ local function getNearbyCoins_radius(originPos, limit)
     end
     table.sort(list, function(a, b)
         return dist(originPos, a.Position) < dist(originPos, b.Position)
-    end))
+    end)
     return list
 end
 
@@ -1412,7 +1412,7 @@ local function startBeachballHUD()
     end)
 end
 
---==================== BEACHBALL WATCHDOG (5p - ONLY NO-INCREASE KICKS) ====================--
+--==================== BEACHBALL WATCHDOG (5p) ====================--
 local function startBeachballWatchdog()
     if not G.BB_WATCH_ENABLE then return end
     task.spawn(function()
@@ -1452,8 +1452,6 @@ local function startBeachballWatchdog()
         end
     end)
 end
-
---==================== STARTUP ====================--
 if G.OPTIMIZE    then task.defer(killVisualCosts)  end
 if G.ANTIAFK     then task.defer(startAntiAFK)     end
 if G.AUTOCOLLECT then task.defer(runFarm)          end
