@@ -75,14 +75,15 @@ local DEFAULTS = {
     ANTIAFK              = true,
     OVERLAY_ON_AT_START  = true,
 
-    -- === (THÊM MỚI) KHÓA TỐI ƯU HOÁ NHẸ CPU, KHÔNG ĐỘNG VÀO COIN ===
-    NORENDER             = false, -- true = tắt 3D render (mạnh nhất, tuỳ bạn)
+    -- === KHÓA TỐI ƯU HOÁ NHẸ CPU (SAFE) ===
+    NORENDER             = false, -- true = tắt 3D render
     OPT_DISABLE_SOUNDS   = true,  -- tắt âm thanh
     OPT_STRIP_LIGHTING   = true,  -- gỡ post-effect, giảm Lighting
-    OPT_TERRAIN_LIGHT    = true,  -- tối giản Terrain (nước/decoration)
-    OPT_QUEUE_BUDGET     = 1200,  -- số instance xử lý tối đa mỗi nhịp
-    OPT_MIN_SLEEP        = 0,     -- ngủ tối thiểu giữa các nhịp (0..0.02)
-    OPT_USE_QUEUE        = true,  -- dùng hàng đợi thay vì quét full mỗi lần
+    OPT_TERRAIN_LIGHT    = true,  -- tối giản Terrain
+    OPT_QUEUE_BUDGET     = 1200,  -- (không dùng trong SAFE) giữ để tương thích
+    OPT_MIN_SLEEP        = 0,     -- (không dùng trong SAFE)
+    OPT_USE_QUEUE        = true,  -- (không dùng trong SAFE)
+    OPT_MODE             = "safe" -- "safe" | "aggressive" (chỉ trim GUI client, không đụng Workspace)
 }
 
 --==================== SERVICES ====================--
@@ -758,26 +759,16 @@ local function startAntiAFK()
     end)
 end
 
---==================== >>> OPTIMIZER (MỚI) <<< ====================--
--- Giảm CPU mạnh nhưng AN TOÀN với coin:
--- - TUYỆT ĐỐI không destroy/xoá coin/touch
--- - Không đổi/cắt TouchInterest
--- - Lọc lớp sớm + hàng đợi + ngân sách mỗi nhịp
-
-local function isCharacterDescendant(inst)
-    return Character and inst:IsDescendantOf(Character)
-end
-local function isCoinPart(inst)
-    return inst:IsA("BasePart") and matchesName(inst.Name)
-end
+--==================== >>> OPTIMIZER (SAFE) <<< ====================--
+-- Chỉ tối ưu cấp hệ thống, KHÔNG đụng Workspace Parts (né anti-cheat).
+-- G.OPT_MODE = "safe" | "aggressive" (aggressive chỉ trim GUI client).
+if G.OPT_MODE == nil then G.OPT_MODE = "safe" end
 
 local function applyLightingTerrainSound()
-    -- No-render (tuỳ chọn)
     if G.NORENDER then
         pcall(function() RunService:Set3dRenderingEnabled(false) end)
     end
 
-    -- Lighting
     if G.OPT_STRIP_LIGHTING then
         pcall(function()
             Lighting.GlobalShadows = false
@@ -796,182 +787,69 @@ local function applyLightingTerrainSound()
         end)
     end
 
-    -- Terrain
     if G.OPT_TERRAIN_LIGHT then
         pcall(function()
             local t = Workspace:FindFirstChildOfClass("Terrain")
             if t then
-                t.WaterReflectance = 0
+                t.WaterReflectance  = 0
                 t.WaterTransparency = 1
-                t.WaterWaveSize = 0
-                t.WaterWaveSpeed = 0
-                t.Decoration = false
+                t.WaterWaveSize     = 0
+                t.WaterWaveSpeed    = 0
+                t.Decoration        = false
             end
         end)
     end
 
-    -- Sound
     if G.OPT_DISABLE_SOUNDS then
         pcall(function() SoundService.Volume = 0 end)
     end
 end
 
-local processed_weak  = setmetatable({}, { __mode = "k" }) -- mark đã tối ưu
-local optimize_queue  = {}   -- FIFO queue
-local qhead, qtail    = 1, 0 -- con trỏ queue
-
-local function qpush(x)
-    if not x or processed_weak[x] then return end
-    qtail += 1
-    optimize_queue[qtail] = x
-end
-local function qempty()  return qhead > qtail end
-local function qpop()
-    if qhead > qtail then return nil end
-    local v = optimize_queue[qhead]
-    optimize_queue[qhead] = nil
-    qhead += 1
-    return v
-end
-
-local function optimizeOne(inst)
-    -- BỎ QUA: coin, nhân vật của mình, và mọi thứ không hiển thị
-    if not inst or not inst.Parent then return end
-    if isCharacterDescendant(inst) then return end
-    if isCoinPart(inst) then return end
-
-    -- BasePart: làm “nhẹ” nhưng KHÔNG đụng TouchInterest
-    if inst:IsA("BasePart") then
-        pcall(function()
-            inst.LocalTransparencyModifier = 1
-            inst.CastShadow = false
-            inst.Material = Enum.Material.SmoothPlastic
-            inst.Reflectance = 0
-            -- Không set CanCollide = false (tránh phá touch logic game)
-        end)
-        return
+local function applyAggressiveClientGuiTrim()
+    local function trimGui(root)
+        if not root then return end
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("ParticleEmitter") then
+                pcall(function()
+                    d.Enabled = false
+                    d.Rate = 0
+                    d.Lifetime = NumberRange.new(0)
+                    d.Speed = NumberRange.new(0)
+                end)
+            elseif d:IsA("Trail") then
+                pcall(function() d.Enabled = false end)
+            elseif d:IsA("Beam") then
+                pcall(function() d.Transparency = NumberSequence.new(1) end)
+            elseif d:IsA("VideoFrame") then
+                pcall(function() d.Playing = false d.Looped = false d.Volume = 0 end)
+            end
+        end
     end
 
-    -- Decal/Texture: ẩn đi để giảm draw calls
-    if inst:IsA("Decal") or inst:IsA("Texture") then
-        pcall(function() inst.Transparency = 1 end)
-        return
-    end
+    local okCore, CoreGui = pcall(function() return game:GetService("CoreGui") end)
+    if okCore and CoreGui then trimGui(CoreGui) end
 
-    -- ParticleEmitter: tắt triệt để
-    if inst:IsA("ParticleEmitter") then
-        pcall(function()
-            inst.Enabled = false
-            inst.Rate = 0
-            inst.Lifetime = NumberRange.new(0)
-            inst.Speed = NumberRange.new(0)
-            inst.Drag = 1
-        end)
-        return
-    end
-
-    -- Trail
-    if inst:IsA("Trail") then
-        pcall(function() inst.Enabled = false end)
-        return
-    end
-
-    -- Beam
-    if inst:IsA("Beam") then
-        pcall(function() inst.Transparency = NumberSequence.new(1) end)
-        return
-    end
-
-    -- Light
-    if inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
-        pcall(function() inst.Enabled = false; inst.Brightness = 0 end)
-        return
-    end
-
-    -- Smoke / Fire / Sparkles
-    if inst:IsA("Smoke") or inst:IsA("Fire") or inst:IsA("Sparkles") then
-        pcall(function() inst.Enabled = false end)
-        return
-    end
-
-    -- Explosion (giảm tác động)
-    if inst:IsA("Explosion") then
-        pcall(function() inst.BlastPressure = 0; inst.BlastRadius = 0 end)
-        return
-    end
-
-    -- Sound (tuỳ chọn)
-    if G.OPT_DISABLE_SOUNDS and inst:IsA("Sound") then
-        pcall(function()
-            inst.Volume = 0
-            inst.Playing = false
-            inst.Looped  = false
-        end)
-        return
-    end
-
-    -- ShirtGraphic: sửa kiểu an toàn
-    if inst:IsA("ShirtGraphic") then
-        pcall(function() inst.Graphic = "" end)
-        return
-    end
-end
-
-local function seedQueueInitial()
-    if not G.OPT_USE_QUEUE then return end
-    local all = Workspace:GetDescendants()
-    for i = 1, #all do
-        qpush(all[i])
-    end
-end
-
-local opt_connections = {}
-
-local function connectNewDescendants()
-    table.insert(opt_connections, Workspace.DescendantAdded:Connect(function(inst)
-        -- ƯU TIÊN: nếu là coin -> DỪNG tối ưu tại đây (không đẩy vào queue)
-        if isCoinPart(inst) then return end
-        qpush(inst)
-    end))
+    local pg = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pg then trimGui(pg) end
 end
 
 local function runOptimizerLoop()
-    -- Áp dụng các tinh chỉnh Lighting/Terrain/Sound ngay
     applyLightingTerrainSound()
-
-    -- Seed queue một lần, xử lý dần theo budget
-    seedQueueInitial()
-    connectNewDescendants()
-
-    local budget = tonumber(G.OPT_QUEUE_BUDGET or 1200) or 1200
-    local minSleep = math.clamp(tonumber(G.OPT_MIN_SLEEP or 0) or 0, 0, 0.02)
-
+    if (G.OPT_MODE or "safe") == "aggressive" then
+        applyAggressiveClientGuiTrim()
+    end
     while G.OPTIMIZE do
-        local handled = 0
-        while handled < budget do
-            local inst = qpop()
-            if not inst then break end
-            if not processed_weak[inst] then
-                optimizeOne(inst)
-                processed_weak[inst] = true
-                handled += 1
-            end
-        end
-        if minSleep > 0 then task.wait(minSleep) else task.defer(function() end) end
-        -- reset queue index khi rỗng để tiết kiệm bộ nhớ
-        if qempty() then
-            qhead, qtail = 1, 0
+        task.wait(1.0)
+        if G.NORENDER then
+            pcall(function() RunService:Set3dRenderingEnabled(false) end)
         end
     end
-
-    -- cleanup nếu tắt OPTIMIZE
-    for _, c in ipairs(opt_connections) do pcall(function() c:Disconnect() end) end
 end
 
 local function killVisualCosts()
-    -- wrapper cho tên hàm cũ (giữ call-site)
     runOptimizerLoop()
 end
+--==================== >>> /OPTIMIZER (SAFE) <<< ====================--
 
 --==================== FARM LOOP (ONE-SHOT STYLE) ====================--
 local farmRunning = false
@@ -1554,29 +1432,25 @@ local function startBeachballWatchdog()
             task.wait(interval)
 
             local cur = getBeachballsWalletOnlySafe()
-            -- Nếu đọc lỗi (nil), bỏ qua chu kỳ này để tránh kick nhầm
             if cur == nil then
-                -- không đổi mốc, tiếp tục vòng lặp
+                -- không đọc được: bỏ qua chu kỳ
             else
                 cur  = tonumber(cur) or cur
                 last = tonumber(last) or last
 
                 if last == nil then
-                    -- Chu kỳ đầu có dữ liệu -> đặt mốc
                     last = cur
                 else
                     if cur > last then
-                        -- ĐÃ TĂNG: OK, cập nhật mốc
                         last = cur
                     elseif cur == last then
-                        -- KHÔNG TĂNG: kick
                         local msg = tostring(G.BB_WATCH_KICK_MSG or "No BeachBalls gained in the last period.")
                         pcall(function()
-                            game:GetService("Players").LocalPlayer:Kick(msg)
+                            Players.LocalPlayer:Kick(msg)
                         end)
                         break
-                    else -- cur < last
-                        -- BỊ GIẢM (ví dụ do mở crate): KHÔNG kick, chỉ cập nhật mốc
+                    else
+                        -- giảm (mở crate): cập nhật mốc, không kick
                         last = cur
                     end
                 end
