@@ -1,7 +1,9 @@
---===[ GAG: BEACHBALLS FARM + AUTO-OPEN + HUD + WATCHDOG + AUTO DEVICE SELECT + BOOT GATE ]===--
+--===[ AUTO-SELECT DEVICE (Tablet) + MAIN SCRIPT ]===--
+
+-- Guard
 repeat task.wait() until game:IsLoaded()
 
---==================== CONFIG (KEEP THESE) ====================--
+--==================== CONFIG (GIỮ NGUYÊN) ====================--
 getgenv().gagConfig = getgenv().gagConfig or {
     Debug          = true,
     AutoFarm       = true,
@@ -62,8 +64,8 @@ local DEFAULTS = {
     BALANCE_LEADERSTATS_NAME = "leaderstats",
     BALANCE_KEYS         = { "BeachBall","BeachBalls","BeachBalls2025","Coins","Money","Cash","Tokens" },
     OPEN_ENABLE_LOOP     = true,
-    BB_WATCH_ENABLE      = true,
-    BB_WATCH_INTERVAL    = 300,
+    BB_WATCH_ENABLE      = true,     -- bật/tắt watchdog
+    BB_WATCH_INTERVAL    = 300,      -- 5 phút = 300 giây
     BB_WATCH_KICK_MSG    = "No BeachBalls gained in the last 5 minutes. Kicking...",
     OPEN_ARGS            = { "Summer2025Box", "MysteryBox", "BeachBalls2025" },
     OPEN_THRESHOLD       = 800,
@@ -72,11 +74,6 @@ local DEFAULTS = {
     OPTIMIZE             = true,
     ANTIAFK              = true,
     OVERLAY_ON_AT_START  = true,
-
-    -- Boot gate defaults
-    BOOT_EXTRA_WAIT_SEC  = 3,
-    READY_MAX_WAIT       = 60,
-    WAIT_DEVICESELECT    = true,
 }
 
 --==================== SERVICES ====================--
@@ -85,15 +82,71 @@ local Workspace            = game:GetService("Workspace")
 local RunService           = game:GetService("RunService")
 local VirtualInputManager  = game:GetService("VirtualInputManager")
 local ReplicatedStorage    = game:GetService("ReplicatedStorage")
-local ReplicatedFirst      = game:GetService("ReplicatedFirst")
 local Lighting             = game:GetService("Lighting")
 local SoundService         = game:GetService("SoundService")
 local HttpService          = game:GetService("HttpService")
-local ContentProvider      = game:GetService("ContentProvider")
 local Heartbeat            = RunService.Heartbeat
 
 local LP = Players.LocalPlayer
 local PlayerGui = LP:WaitForChild("PlayerGui")
+
+--==================== AUTO-SELECT DEVICE (Tablet) ====================--
+do
+    local function safeFireChangeLastDevice()
+        local ok, rem = pcall(function()
+            return ReplicatedStorage
+                :WaitForChild("Remotes", 2)
+                :WaitForChild("Extras", 2)
+                :WaitForChild("ChangeLastDevice", 2)
+        end)
+        if ok and rem then
+            pcall(function() rem:FireServer("Tablet") end)
+        end
+    end
+
+    local function setDeviceAttribute()
+        pcall(function() PlayerGui:SetAttribute("Device", "Tablet") end)
+    end
+
+    local function clickGuiButton(btn: GuiButton)
+        local ok = pcall(function() btn:Activate() end)
+        if not ok then
+            local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
+            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, btn, 0)
+            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, btn, 0)
+        end
+    end
+
+    local function trySelectOn(containerParent: Instance?)
+        local ok, tabletBtn = pcall(function()
+            local container = containerParent and containerParent:WaitForChild("Container", 5)
+            local tablet    = container and container:WaitForChild("Tablet", 5)
+            return tablet and tablet:WaitForChild("Button", 5)
+        end)
+        if ok and tabletBtn and tabletBtn:IsA("GuiButton") then
+            safeFireChangeLastDevice()
+            setDeviceAttribute()
+            clickGuiButton(tabletBtn)
+            return true
+        end
+        return false
+    end
+
+    -- Khi GUI DeviceSelect xuất hiện trong PlayerGui
+    PlayerGui.ChildAdded:Connect(function(child)
+        if child.Name ~= "DeviceSelect" then return end
+        task.defer(function() trySelectOn(child) end)
+    end)
+
+    -- Trường hợp DeviceSelect đã có sẵn
+    task.defer(function()
+        local existing = PlayerGui:FindFirstChild("DeviceSelect")
+        if existing then
+            trySelectOn(existing)
+        end
+    end)
+end
+--==================== /AUTO-SELECT DEVICE ====================--
 
 --==================== REMOTES / MODULES ====================--
 local openCrate   = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Shop"):WaitForChild("OpenCrate")
@@ -107,101 +160,17 @@ local function D(k) return DEFAULTS[k] end
 G.DEBUG            = (G.Debug ~= false)
 G.AUTOCOLLECT      = (G.AutoFarm ~= false)
 G.OPEN_ENABLE_LOOP = (G.OpenCrate ~= false) and D("OPEN_ENABLE_LOOP")
-for k, v in pairs(DEFAULTS) do if G[k] == nil then G[k] = v end end
+
+for k, v in pairs(DEFAULTS) do
+    if G[k] == nil then
+        G[k] = v
+    end
+end
 
 --==================== LOG HELPERS ====================--
 local function dbg(...)   if G.DEBUG then print("[UGFarm]", ...) end end
 local function log(...)   print("[UGCrate]", ...) end
 local function warnl(...) warn("[UGCrate]", ...) end
-
---==================== AUTO DEVICE SELECT ====================--
--- Change "Tablet" -> "Phone" nếu muốn chọn Phone
-local DEVICE_CHOICE = "Tablet"
-
-local function safeFireChangeLastDevice(choice)
-    local ok, rem = pcall(function()
-        return ReplicatedStorage
-            :WaitForChild("Remotes", 5)
-            :WaitForChild("Extras", 5)
-            :WaitForChild("ChangeLastDevice", 5)
-    end)
-    if ok and rem then pcall(function() rem:FireServer(choice) end) end
-end
-
-local function setDeviceAttribute(choice)
-    pcall(function() PlayerGui:SetAttribute("Device", choice) end)
-end
-
-local function clickGuiButton(btn: GuiButton)
-    local function once()
-        local ok = pcall(function() btn:Activate() end)
-        if not ok then
-            local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
-            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, btn, 0)
-            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, btn, 0)
-        end
-    end
-    once(); task.wait(0.05); once()
-end
-
-local function findDeviceButton(root: Instance, choice: string)
-    if not root then return nil end
-    local ok, btn = pcall(function()
-        local deviceSelect = root:FindFirstChild("DeviceSelect", true) or root
-        local container    = deviceSelect:FindFirstChild("Container", true) or deviceSelect
-        local device       = container:FindFirstChild(choice, true) or container:FindFirstChild(choice .. "Frame", true)
-        return device and device:FindFirstChild("Button", true)
-    end)
-    if ok and btn and btn:IsA("GuiButton") then return btn end
-    for _, d in ipairs(root:GetDescendants()) do
-        if d:IsA("TextButton") or d:IsA("ImageButton") then
-            if string.find(d.Name:lower(), choice:lower(), 1, true) then return d end
-            local labelObj = d:FindFirstChildWhichIsA("TextLabel")
-            local label = labelObj and labelObj.Text
-            if type(label) == "string" and string.find(label:lower(), choice:lower(), 1, true) then
-                return d
-            end
-        end
-    end
-    return nil
-end
-
-local function trySelectDevice(where: Instance, choice: string)
-    local btn = findDeviceButton(where, choice)
-    if not btn then return false end
-    safeFireChangeLastDevice(choice)
-    setDeviceAttribute(choice)
-    clickGuiButton(btn)
-    return true
-end
-
-local __devConns = {}
-local function startAutoDeviceSelect()
-    -- thử ngay với PlayerGui
-    pcall(function() trySelectDevice(PlayerGui, DEVICE_CHOICE) end)
-
-    -- nghe PlayerGui
-    table.insert(__devConns, PlayerGui.ChildAdded:Connect(function(child)
-        if child.Name == "DeviceSelect" or child:IsA("ScreenGui") then
-            task.defer(function() trySelectDevice(child, DEVICE_CHOICE) end)
-        end
-    end))
-
-    -- UI ở ReplicatedFirst.UISelector.Loading
-    pcall(function()
-        local uiSel = ReplicatedFirst:FindFirstChild("UISelector")
-        if uiSel then
-            trySelectDevice(uiSel, DEVICE_CHOICE)
-            local loading = uiSel:FindFirstChild("Loading")
-            if loading then trySelectDevice(loading, DEVICE_CHOICE) end
-        end
-    end)
-    table.insert(__devConns, ReplicatedFirst.DescendantAdded:Connect(function(d)
-        if d.Name == "DeviceSelect" or (d.Parent and d.Parent.Name == "Loading") then
-            task.defer(function() trySelectDevice(ReplicatedFirst, DEVICE_CHOICE) end)
-        end
-    end))
-end
 
 --==================== UTIL ====================--
 local function toNumber(v)
@@ -223,23 +192,34 @@ local function refreshCharacter()
     HRP       = Character:WaitForChild("HumanoidRootPart")
 end
 
-local function safeHRPPos() return (Character and Character.Parent and HRP and HRP.Parent) and HRP.Position or nil end
-local function dist(a, b) return (a - b).Magnitude end
+local function safeHRPPos()
+    return (Character and Character.Parent and HRP and HRP.Parent) and HRP.Position or nil
+end
+
+local function dist(a, b)
+    return (a - b).Magnitude
+end
 
 --==================== BEACHBALL WALLET READERS ====================--
 local LAST_WALLET_BB = nil
 local BB_KEYS        = { "BeachBalls2025","BeachBalls","BeachBall","Beach Balls" }
 local __lastRemoteAt = 0
 
-local function updateSticky(n) if n then LAST_WALLET_BB = tonumber(n) or LAST_WALLET_BB end end
+local function updateSticky(n)
+    if n then LAST_WALLET_BB = tonumber(n) or LAST_WALLET_BB end
+end
 
 local function readFromProfile()
     local Remotes       = ReplicatedStorage:FindFirstChild("Remotes")
     local Inventory     = Remotes and Remotes:FindFirstChild("Inventory")
     local GetProfileData= Inventory and Inventory:FindFirstChild("GetProfileData")
     if not (GetProfileData and GetProfileData:IsA("RemoteFunction")) then return nil end
-    local ok, data = pcall(function() return GetProfileData:InvokeServer() end)
+
+    local ok, data = pcall(function()
+        return GetProfileData:InvokeServer()
+    end)
     if not ok or type(data) ~= "table" then return nil end
+
     local owned = (((data or {}).Materials or {}).Owned) or {}
     for _, key in ipairs(BB_KEYS) do
         local n = toNumber(owned[key])
@@ -251,6 +231,7 @@ end
 local function readFromLeaderstats()
     local ls = LP:FindFirstChild("leaderstats")
     if not ls then return nil end
+
     for _, key in ipairs(BB_KEYS) do
         local val = ls:FindFirstChild(key)
         if val and (val:IsA("IntValue") or val:IsA("NumberValue") or val:IsA("StringValue")) then
@@ -265,18 +246,34 @@ local function attachLeaderstatsWatchers()
     local function connectValue(v)
         if not v then return end
         if not (v:IsA("IntValue") or v:IsA("NumberValue") or v:IsA("StringValue")) then return end
-        local function update() updateSticky(toNumber(v.Value)) end
-        update(); v:GetPropertyChangedSignal("Value"):Connect(update)
+        local function update()
+            updateSticky(toNumber(v.Value))
+        end
+        update()
+        v:GetPropertyChangedSignal("Value"):Connect(update)
     end
+
     local function scan(ls)
         if not ls then return end
-        for _, k in ipairs(BB_KEYS) do connectValue(ls:FindFirstChild(k)) end
+        for _, k in ipairs(BB_KEYS) do
+            connectValue(ls:FindFirstChild(k))
+        end
         ls.ChildAdded:Connect(function(c)
-            for _, k in ipairs(BB_KEYS) do if c.Name == k then connectValue(c) break end end
+            for _, k in ipairs(BB_KEYS) do
+                if c.Name == k then
+                    connectValue(c)
+                    break
+                end
+            end
         end)
     end
+
     scan(LP:FindFirstChild("leaderstats"))
-    LP.ChildAdded:Connect(function(c) if c.Name == "leaderstats" then scan(c) end end)
+    LP.ChildAdded:Connect(function(c)
+        if c.Name == "leaderstats" then
+            scan(c)
+        end
+    end)
 end
 
 local function startProfilePoller()
@@ -300,11 +297,17 @@ end
 
 local function getBeachballsWalletOnlySafe()
     local ls = readFromLeaderstats()
-    if ls ~= nil then updateSticky(ls); return ls end
+    if ls ~= nil then
+        updateSticky(ls)
+        return ls
+    end
     if os.clock() - __lastRemoteAt > 10 then
         __lastRemoteAt = os.clock()
         local rf = readFromProfile()
-        if rf ~= nil then updateSticky(rf); return rf end
+        if rf ~= nil then
+            updateSticky(rf)
+            return rf
+        end
     end
     return LAST_WALLET_BB
 end
@@ -322,8 +325,11 @@ end
 
 getgenv().GetBeachballCount = function()
     local n = getBeachballsWalletOnly()
-    if n ~= nil then print(string.format("[BB] BeachBalls (wallet): %d", n))
-    else warn("[BB] Không đọc được số BeachBalls ví.") end
+    if n ~= nil then
+        print(string.format("[BB] BeachBalls (wallet): %d", n))
+    else
+        warn("[BB] Không đọc được số BeachBalls ví.")
+    end
     return n
 end
 
@@ -331,9 +337,10 @@ end
 local function matchesName(partName)
     local names = G.COIN_NAMES or {}
     local mode  = (G.NAME_MATCH_MODE or "contains"):lower()
+
     for _, key in ipairs(names) do
         if typeof(key) == "string" then
-            if mode == "exact" and partName == key then return true end
+            if mode == "exact"   and partName == key                 then return true end
             if mode == "contains" and string.find(partName, key, 1, true) then return true end
         end
     end
@@ -352,11 +359,14 @@ end
 local function selectTouchTarget(rootPart)
     if not G.SCAN_DESC_TOUCH then return rootPart end
     if rootPart:FindFirstChild("TouchInterest") then return rootPart end
+
     local best, scoreBest = rootPart, 0
     for _, d in ipairs(rootPart:GetDescendants()) do
         if d:IsA("BasePart") then
             local sc = (d:FindFirstChild("TouchInterest") and 10 or 0) + (d.Size.X + d.Size.Y + d.Size.Z)
-            if sc > scoreBest then best, scoreBest = d, sc end
+            if sc > scoreBest then
+                best, scoreBest = d, sc
+            end
         end
     end
     return best
@@ -369,18 +379,29 @@ end
 
 --==================== SCANNING (RADIUS / INDEX) ====================--
 local CoinSet, CoinList, lastHardRescan = {}, {}, 0
+
 local function addIfCoin(inst)
     if inst and inst.Parent and inst:IsA("BasePart") and matchesName(inst.Name) then
         CoinSet[inst] = true
-        inst.AncestryChanged:Connect(function(_, parent) if not parent then CoinSet[inst] = nil end end)
-        pcall(function() inst.Destroying:Connect(function() CoinSet[inst] = nil end) end)
+        inst.AncestryChanged:Connect(function(_, parent)
+            if not parent then CoinSet[inst] = nil end
+        end)
+        pcall(function()
+            inst.Destroying:Connect(function()
+                CoinSet[inst] = nil
+            end)
+        end)
     end
 end
+
 local function buildIndexFull()
     CoinSet = {}
-    for _, d in ipairs(Workspace:GetDescendants()) do addIfCoin(d) end
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        addIfCoin(d)
+    end
     dbg("Indexed coins:", (next(CoinSet) and "ok") or "empty")
 end
+
 Workspace.DescendantAdded:Connect(addIfCoin)
 
 local function getNearbyCoins_index(originPos, limit)
@@ -392,7 +413,9 @@ local function getNearbyCoins_index(originPos, limit)
             CoinSet[inst] = nil
         end
     end
-    table.sort(CoinList, function(a, b) return dist(originPos, a.Position) < dist(originPos, b.Position) end)
+    table.sort(CoinList, function(a, b)
+        return dist(originPos, a.Position) < dist(originPos, b.Position)
+    end)
     return CoinList
 end
 
@@ -404,8 +427,12 @@ local function getNearbyCoins_radius(originPos, limit)
     end
     local around = Workspace:GetPartBoundsInRadius(originPos, limit, params) or {}
     local list = {}
-    for _, p in ipairs(around) do if coinIsCollectible(p) then table.insert(list, p) end end
-    table.sort(list, function(a, b) return dist(originPos, a.Position) < dist(originPos, b.Position) end)
+    for _, p in ipairs(around) do
+        if coinIsCollectible(p) then table.insert(list, p) end
+    end
+    table.sort(list, function(a, b)
+        return dist(originPos, a.Position) < dist(originPos, b.Position)
+    end)
     return list
 end
 
@@ -420,48 +447,66 @@ end
 
 --==================== UNDERGROUND MODE ====================--
 local UnderAnchorCFrame, UnderActive = nil, false
+
 local function setupUnderAnchor()
-    local here = safeHRPPos(); if not here then return end
+    local here = safeHRPPos()
+    if not here then return end
+
     UnderAnchorCFrame = CFrame.new(here.X, here.Y - (G.UNDER_HEIGHT or 100), here.Z)
-    HRP.Anchored = true; HRP.CFrame  = UnderAnchorCFrame
-    UnderActive = true; dbg(string.format("Underground anchor @Y-%d", G.UNDER_HEIGHT or 100))
+    HRP.Anchored = true
+    HRP.CFrame  = UnderAnchorCFrame
+    UnderActive = true
+
+    dbg(string.format("Underground anchor @Y-%d", G.UNDER_HEIGHT or 100))
 end
+
 local function resetUnderAnchor()
     if HRP and HRP.Parent then HRP.Anchored = false end
-    UnderActive, UnderAnchorCFrame = false, nil
+    UnderActive        = false
+    UnderAnchorCFrame  = nil
     dbg("Underground anchor cleared")
 end
 
 --==================== TOUCH HELPERS ====================--
 local firetouch = rawget(getfenv and getfenv() or {}, "firetouchinterest") or _G.firetouchinterest
+
 local function fireTouchPair(a, b)
     if not firetouch or not G.USE_FIRETOUCH then return end
     pcall(function() firetouch(a, b, 0) end); Heartbeat:Wait()
     pcall(function() firetouch(a, b, 1) end)
 end
+
 local function stopVelocity()
     if not HRP then return end
     HRP.AssemblyLinearVelocity = Vector3.new()
     HRP.AssemblyAngularVelocity = Vector3.new()
 end
+
 local function snap(cf)
     HRP.Anchored = false
     stopVelocity()
     HRP.CFrame = cf
     Heartbeat:Wait()
 end
+
 local function overlappedWithTarget(target)
     if not G.OVERLAP_VERIFY then return true end
     if not HRP or not target then return false end
+
     local pad  = G.OVERLAP_BOX_PAD or Vector3.new(2,2,2)
     local size = HRP.Size + pad
+
     local params = OverlapParams.new()
     params.FilterType = Enum.RaycastFilterType.Whitelist
     params.FilterDescendantsInstances = { target }
+
     local parts = Workspace:GetPartBoundsInBox(HRP.CFrame, size, params)
     if not parts then return false end
+
     for _, p in ipairs(parts) do
-        if p == target or p:IsDescendantOf(target) then return true end
+        if p == target or p:IsDescendantOf(target) then
+            return true
+        end
     end
     return false
 end
@@ -487,11 +532,14 @@ end
 local function makeGuiBalanceReader()
     local segs = G.BALANCE_GUI_SEGMENTS
     if type(segs) ~= "table" or #segs == 0 then return nil end
+
     local root = resolveFromLocalPlayer(segs)
     if not root then return nil end
+
     if root:IsA("TextLabel") or root:IsA("TextButton") then
         return function() return parseNumberFromText(root.Text) or 0 end
     end
+
     local specified = G.BALANCE_TEXT_CHILD_NAME
     if specified then
         local c = root:FindFirstChild(specified, true)
@@ -499,11 +547,15 @@ local function makeGuiBalanceReader()
             return function() return parseNumberFromText(c.Text) or 0 end
         end
     end
+
     local best
     for _, d in ipairs(root:GetDescendants()) do
         if d:IsA("TextLabel") or d:IsA("TextButton") then best = d; break end
     end
-    if best then return function() return parseNumberFromText(best.Text) or 0 end end
+    if best then
+        return function() return parseNumberFromText(best.Text) or 0 end
+    end
+
     for _, d in ipairs(root:GetDescendants()) do
         if d:IsA("NumberValue") or d:IsA("IntValue") then
             return function() return tonumber(d.Value) or 0 end
@@ -515,6 +567,7 @@ end
 local function makeLeaderstatsBalanceReader()
     local ls = Players.LocalPlayer:FindFirstChild(G.BALANCE_LEADERSTATS_NAME or "leaderstats")
     if not ls then return nil end
+
     local keys = G.BALANCE_KEYS or { "Coins" }
     for _, k in ipairs(keys) do
         local v = ls:FindFirstChild(k)
@@ -526,58 +579,81 @@ local function makeLeaderstatsBalanceReader()
 end
 
 local BAL_GETTER
+
 local function ensureBalanceGetter()
     BAL_GETTER = makeGuiBalanceReader()
-    if not BAL_GETTER and not G.BALANCE_ONLY then BAL_GETTER = makeLeaderstatsBalanceReader() end
+    if not BAL_GETTER and not G.BALANCE_ONLY then
+        BAL_GETTER = makeLeaderstatsBalanceReader()
+    end
     return BAL_GETTER ~= nil
 end
+
 local function ensureBalanceReady(timeout)
     if not G.BALANCE_DETECT then return true end
+
     local tmax = timeout or (G.BALANCE_READY_TIMEOUT or 5)
     local t0   = os.clock()
+
     repeat
         if ensureBalanceGetter() then return true end
         task.wait(0.2)
     until os.clock() - t0 > tmax
+
     return false
 end
+
 local function getBalanceNow()
     if not G.BALANCE_DETECT then return nil end
-    if not BAL_GETTER then if not ensureBalanceReady() then return nil end end
+    if not BAL_GETTER then
+        if not ensureBalanceReady() then return nil end
+    end
     local ok, val = pcall(BAL_GETTER)
     if not ok then return nil end
     return tonumber(val) or 0
 end
+
 local function waitForBalanceIncrease(prev)
     if not G.BALANCE_DETECT then return false end
+
     local minDelta = G.BALANCE_DELTA_MIN or 1
     local window   = G.BALANCE_OBS_WINDOW or 1.2
     local poll     = G.BALANCE_POLL or 0.05
+
     local t0 = os.clock()
     while os.clock() - t0 <= window do
         task.wait(poll)
         local cur = getBalanceNow()
-        if cur and prev and (cur - prev) >= minDelta then return true end
+        if cur and prev and (cur - prev) >= minDelta then
+            return true
+        end
     end
     return false
 end
 
 --==================== FAIL / COOLDOWN ====================--
 local FailMap = {}
+
 local function inCooldown(coin)
-    local f = FailMap[coin]; return f and f.until_ts and (os.clock() < f.until_ts)
+    local f = FailMap[coin]
+    return f and f.until_ts and (os.clock() < f.until_ts)
 end
+
 local function addFail(coin)
     local f = FailMap[coin] or { count = 0, until_ts = 0 }
     f.count = f.count + 1
+
     if f.count >= (G.MAX_FAIL_PER_VISIT or 2) then
         f.until_ts = os.clock() + (G.FAIL_COOLDOWN_SEC or 8)
         f.count    = 0
         dbg("Cooldown coin for", math.floor(G.FAIL_COOLDOWN_SEC or 8), "s:", coin:GetFullName())
     end
+
     FailMap[coin] = f
 end
-local function clearFail(coin) FailMap[coin] = nil end
+
+local function clearFail(coin)
+    FailMap[coin] = nil
+end
 
 --==================== JOB / TELEPORT ====================--
 local CURRENT_JOB = 0
@@ -594,8 +670,11 @@ local function teleportToCoin_job(coin, jobId)
 
     local useBalance = G.BALANCE_DETECT
     if useBalance and not ensureBalanceReady() and G.BALANCE_ONLY then
-        dbg("Balance GUI not ready -> skip coin once"); addFail(coin); return false
+        dbg("Balance GUI not ready -> skip coin once")
+        addFail(coin)
+        return false
     end
+
     local balBefore = useBalance and getBalanceNow() or nil
     local topPos    = topOf(target)
 
@@ -603,15 +682,21 @@ local function teleportToCoin_job(coin, jobId)
     task.wait(G.TOUCH_TIME or 0.12)
 
     if firetouch and G.USE_FIRETOUCH then
-        fireTouchPair(HRP, target); fireTouchPair(target, HRP)
+        fireTouchPair(HRP, target)
+        fireTouchPair(target, HRP)
         for _, d in ipairs(target:GetDescendants()) do
-            if d:IsA("BasePart") then fireTouchPair(HRP, d); fireTouchPair(d, HRP) end
+            if d:IsA("BasePart") then
+                fireTouchPair(HRP, d)
+                fireTouchPair(d, HRP)
+            end
         end
         Heartbeat:Wait()
     end
 
     local success = false
-    if useBalance and balBefore then success = waitForBalanceIncrease(balBefore) end
+    if useBalance and balBefore then
+        success = waitForBalanceIncrease(balBefore)
+    end
 
     if not success and not G.BALANCE_ONLY then
         if not target.Parent then
@@ -619,28 +704,41 @@ local function teleportToCoin_job(coin, jobId)
         else
             local startY = target.Position.Y
             local t0j    = os.clock()
+
             while os.clock() - t0j <= (G.JUMP_WINDOW or 0.4) and target.Parent do
                 task.wait(0.03)
-                if (target.Position.Y - startY) >= (G.JUMP_DELTA_Y or 2.0) then success = true; break end
+                if (target.Position.Y - startY) >= (G.JUMP_DELTA_Y or 2.0) then
+                    success = true
+                    break
+                end
             end
-            if not success and overlappedWithTarget(target) then success = true end
+
+            if not success and overlappedWithTarget(target) then
+                success = true
+            end
         end
     end
 
     if success then clearFail(coin) else addFail(coin) end
+
     if UnderAnchorCFrame and jobActive(jobId) then
-        HRP.Anchored = true; stopVelocity(); HRP.CFrame = UnderAnchorCFrame
+        HRP.Anchored = true
+        stopVelocity()
+        HRP.CFrame = UnderAnchorCFrame
     else
         stopVelocity()
     end
+
     return success
 end
 
 --==================== ANTI-AFK ====================--
 local antiAFKThread
+
 local function startAntiAFK()
     if antiAFKThread or not G.ANTIAFK then return end
     dbg("Anti-AFK started")
+
     antiAFKThread = task.spawn(function()
         while G.ANTIAFK do
             task.wait(60)
@@ -656,102 +754,174 @@ end
 --==================== OPTIMIZER ====================--
 local function isCharacterDescendant(inst) return Character and inst:IsDescendantOf(Character) end
 local function isCoinPart(inst)         return inst:IsA("BasePart") and matchesName(inst.Name) end
+
 local function killVisualCosts()
     if not G.OPTIMIZE then return end
     dbg("Optimize mode: reducing graphics (safe)")
+
     pcall(function()
         Lighting.GlobalShadows = false
         Lighting.FogStart, Lighting.FogEnd = 0, 50
-        for _, c in ipairs(Lighting:GetChildren()) do if c:IsA("PostEffect") then c.Enabled = false end end
-        local atmos = Lighting:FindFirstChildOfClass("Atmosphere"); if atmos then atmos.Density = 0 end
+        for _, c in ipairs(Lighting:GetChildren()) do
+            if c:IsA("PostEffect") then c.Enabled = false end
+        end
+        local atmos = Lighting:FindFirstChildOfClass("Atmosphere")
+        if atmos then atmos.Density = 0 end
     end)
+
     pcall(function()
-        local t = Workspace:FindFirstChildOfClass("Terrain"); if t then
-            t.WaterReflectance = 0; t.WaterTransparency = 1; t.WaterWaveSize = 0; t.WaterWaveSpeed = 0; t.Decoration = false
+        local t = Workspace:FindFirstChildOfClass("Terrain")
+        if t then
+            t.WaterReflectance = 0
+            t.WaterTransparency = 1
+            t.WaterWaveSize = 0
+            t.WaterWaveSpeed = 0
+            t.Decoration = false
         end
     end)
+
     pcall(function()
         SoundService.Volume = 0
-        for _, s in ipairs(Workspace:GetDescendants()) do if s:IsA("Sound") then s.Volume = 0; s.Playing = false end end
+        for _, s in ipairs(Workspace:GetDescendants()) do
+            if s:IsA("Sound") then
+                s.Volume = 0
+                s.Playing = false
+            end
+        end
     end)
+
     for _, inst in ipairs(Workspace:GetDescendants()) do
         if inst:IsA("BasePart") then
             if not isCharacterDescendant(inst) and not isCoinPart(inst) then
                 pcall(function()
-                    inst.LocalTransparencyModifier = 1; inst.CastShadow = false; inst.Material = Enum.Material.SmoothPlastic; inst.Reflectance = 0
+                    inst.LocalTransparencyModifier = 1
+                    inst.CastShadow = false
+                    inst.Material = Enum.Material.SmoothPlastic
+                    inst.Reflectance = 0
                 end)
-            else pcall(function() inst.LocalTransparencyModifier = 0 end) end
+            else
+                pcall(function() inst.LocalTransparencyModifier = 0 end)
+            end
         elseif inst:IsA("Decal") or inst:IsA("Texture") then
-            if not isCharacterDescendant(inst) then pcall(function() inst.Transparency = 1 end) end
+            if not isCharacterDescendant(inst) then
+                pcall(function() inst.Transparency = 1 end)
+            end
         elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
             or inst:IsA("Explosion") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
             pcall(function() inst.Enabled = false end)
-        elseif inst:IsA("Light") then pcall(function() inst.Enabled = false end)
+        elseif inst:IsA("Light") then
+            pcall(function() inst.Enabled = false end)
         end
     end
+
     Workspace.DescendantAdded:Connect(function(inst)
         task.defer(function()
             if inst:IsA("BasePart") then
                 if not isCharacterDescendant(inst) and not isCoinPart(inst) then
                     pcall(function()
-                        inst.LocalTransparencyModifier = 1; inst.CastShadow = false; inst.Material = Enum.Material.SmoothPlastic; inst.Reflectance = 0
+                        inst.LocalTransparencyModifier = 1
+                        inst.CastShadow = false
+                        inst.Material = Enum.Material.SmoothPlastic
+                        inst.Reflectance = 0
                     end)
-                else pcall(function() inst.LocalTransparencyModifier = 0 end) end
+                else
+                    pcall(function() inst.LocalTransparencyModifier = 0 end)
+                end
             elseif inst:IsA("Decal") or inst:IsA("Texture") then
                 if not isCharacterDescendant(inst) then pcall(function() inst.Transparency = 1 end) end
             elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
                 or inst:IsA("Explosion") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
                 pcall(function() inst.Enabled = false end)
-            elseif inst:IsA("Light") then pcall(function() inst.Enabled = false end)
-            elseif inst:IsA("Sound") then pcall(function() inst.Volume = 0; inst.Playing = false end)
-            elseif inst:IsDescendantOf(Lighting) and inst:IsA("PostEffect") then pcall(function() inst.Enabled = false end)
+            elseif inst:IsA("Light") then
+                pcall(function() inst.Enabled = false end)
+            elseif inst:IsA("Sound") then
+                pcall(function() inst.Volume = 0; inst.Playing = false end)
+            elseif inst:IsDescendantOf(Lighting) and inst:IsA("PostEffect") then
+                pcall(function() inst.Enabled = false end)
             end
         end)
     end)
 end
 
---==================== FARM LOOP (ONE-SHOT) ====================--
+--==================== FARM LOOP (ONE-SHOT STYLE) ====================--
 local farmRunning = false
+
 local function runFarm()
-    if not G.AUTOCOLLECT or farmRunning then return end
+    if not G.AUTOCOLLECT then return end
+    if farmRunning then return end
+
     farmRunning = true
-    if (G.SCAN_METHOD or "radius") == "index" then buildIndexFull(); lastHardRescan = os.clock() end
+
+    if (G.SCAN_METHOD or "radius") == "index" then
+        buildIndexFull()
+        lastHardRescan = os.clock()
+    end
+
     dbg("Farm started (scan=", G.SCAN_METHOD or "radius", ", oneshot)")
+
     local lastProgress = os.clock()
+
     while G.AUTOCOLLECT do
         if (not Character) or (not Character.Parent) or (not HRP) or (not HRP.Parent) or (not Humanoid) or Humanoid.Health <= 0 then
-            dbg("Character refresh..."); refreshCharacter(); resetUnderAnchor(); task.wait(0.4)
+            dbg("Character refresh...")
+            refreshCharacter()
+            resetUnderAnchor()
+            task.wait(0.4)
         end
+
         if (G.SCAN_METHOD or "radius") == "index" then
-            if os.clock() - lastHardRescan >= (G.HARD_RESCAN_SEC or 5) then buildIndexFull(); lastHardRescan = os.clock() end
+            if os.clock() - lastHardRescan >= (G.HARD_RESCAN_SEC or 5) then
+                buildIndexFull()
+                lastHardRescan = os.clock()
+            end
         end
+
         if os.clock() - lastProgress > (G.STUCK_RESET_SEC or 15) then
-            dbg("Watchdog: no progress -> hard reset"); resetUnderAnchor()
-            if (G.SCAN_METHOD or "radius") == "index" then buildIndexFull(); lastHardRescan = os.clock() end
-            newJob(); task.wait(0.2); lastProgress = os.clock()
+            dbg("Watchdog: no progress -> hard reset")
+            resetUnderAnchor()
+            if (G.SCAN_METHOD or "radius") == "index" then
+                buildIndexFull()
+                lastHardRescan = os.clock()
+            end
+            newJob()
+            task.wait(0.2)
+            lastProgress = os.clock()
         end
+
         local origin = (UnderAnchorCFrame and UnderAnchorCFrame.Position) or (safeHRPPos() or Vector3.new())
         local coins  = getNearbyCoins(origin)
+
         if #coins == 0 then
             if UnderActive then resetUnderAnchor() end
             task.wait(G.RESCAN_INTERVAL or 1.2)
         else
-            if G.UNDERGROUND_MODE and not UnderActive then setupUnderAnchor(); origin = UnderAnchorCFrame.Position end
-            local jobId, processed = newJob(), 0
+            if G.UNDERGROUND_MODE and not UnderActive then
+                setupUnderAnchor()
+                origin = UnderAnchorCFrame.Position
+            end
+
+            local jobId    = newJob()
+            local processed= 0
+
             for _, coin in ipairs(coins) do
                 if not G.AUTOCOLLECT or not jobActive(jobId) then break end
                 if processed >= (G.MAX_COINS_PER_TICK or 10) then break end
+
                 if coinIsCollectible(coin) and not inCooldown(coin) then
                     local ok = teleportToCoin_job(coin, jobId)
-                    processed += 1
+                    processed = processed + 1
                     task.wait(G.TELE_DELAY or 1.0)
                     if ok then lastProgress = os.clock() end
                 end
             end
+
             if processed == 0 then task.wait(0.15) end
         end
     end
-    dbg("Farm stopped"); resetUnderAnchor(); farmRunning = false
+
+    dbg("Farm stopped")
+    resetUnderAnchor()
+    farmRunning = false
 end
 
 --==================== CRATE DATA (STATIC) ====================--
@@ -769,25 +939,50 @@ local CRATE_ITEMS = {
     {Name="Sunrise",         Type="Gun",   Rarity="Godly",     Percent=0.2},
     {Name="Chroma Sunrise",  Type="Gun",   Rarity="Godly",     Percent=0.2},
 }
-local CRATE_INDEX = {}; for _, it in ipairs(CRATE_ITEMS) do CRATE_INDEX[it.Name] = it end
-local function fmtPercent(v) if type(v) ~= "number" then return tostring(v) end if v % 1 == 0 then return string.format("%d%%", v) end return tostring(v) .. "%" end
+
+local CRATE_INDEX = {}
+for _, it in ipairs(CRATE_ITEMS) do CRATE_INDEX[it.Name] = it end
+
+local function fmtPercent(v)
+    if type(v) ~= "number" then return tostring(v) end
+    if v % 1 == 0 then return string.format("%d%%", v) end
+    return tostring(v) .. "%"
+end
 
 --==================== INVENTORY SNAPSHOT ====================--
 local CATEGORIES          = { "Weapons","Effects","Perks","Emotes","Radios","Pets" }
 local KEY_OR_VALUE_FOR    = { Weapons = true, Pets = true }
-local function getItemInfo(cat, id) local db = (cat == "Emotes" and Sync.Emotes) or (cat == "Toys" and Sync.Toys) or Sync[cat]; return db and db[id] or nil end
-local function displayNameOf(cat, id) local info = getItemInfo(cat, id); return (info and (info.ItemName or info.DisplayName or info.Name)) or tostring(id) end
+
+local function getItemInfo(cat, id)
+    local db = (cat == "Emotes" and Sync.Emotes) or (cat == "Toys" and Sync.Toys) or Sync[cat]
+    return db and db[id] or nil
+end
+
+local function displayNameOf(cat, id)
+    local info = getItemInfo(cat, id)
+    return (info and (info.ItemName or info.DisplayName or info.Name)) or tostring(id)
+end
+
 local function resolveUniqueWeaponID(u)
-    local baseId = u.BaseItem; if not u.EvoEquipped then return baseId end
-    local baseInfo = Sync.Weapons[baseId]; if not baseInfo or not baseInfo.Evo then return baseId end
-    local xp = u.XP or 0; local stage = 1
+    local baseId = u.BaseItem
+    if not u.EvoEquipped then return baseId end
+
+    local baseInfo = Sync.Weapons[baseId]
+    if not baseInfo or not baseInfo.Evo then return baseId end
+
+    local xp    = u.XP or 0
+    local stage = 1
     if baseInfo.Evo[2] and xp >= baseInfo.Evo[2].XPRequired then stage = 2 end
     if baseInfo.Evo[3] and xp >= baseInfo.Evo[3].XPRequired then stage = 3 end
     if baseInfo.Evo[4] and xp >= baseInfo.Evo[4].XPRequired then stage = 4 end
-    local evo = baseInfo.Evo[stage]; return (evo and evo.ItemName) or baseId
+
+    local evo = baseInfo.Evo[stage]
+    return (evo and evo.ItemName) or baseId
 end
+
 local function snapshotInventoryFlat()
     local flat = {}
+
     for _, cat in ipairs(CATEGORIES) do
         local owned = ProfileData[cat] and ProfileData[cat].Owned
         if owned then
@@ -799,6 +994,7 @@ local function snapshotInventoryFlat()
             end
         end
     end
+
     if ProfileData.Uniques then
         for _, u in pairs(ProfileData.Uniques) do
             local wid  = resolveUniqueWeaponID(u)
@@ -806,51 +1002,99 @@ local function snapshotInventoryFlat()
             flat[name] = (flat[name] or 0) + 1
         end
     end
+
     return flat
 end
+
 local function diffAdded(prev, cur)
     local added = {}
-    for name, c in pairs(cur) do local p = prev[name] or 0; if c > p then added[name] = c - p end end
+    for name, c in pairs(cur) do
+        local p = prev[name] or 0
+        if c > p then added[name] = c - p end
+    end
     return added
 end
 
 --==================== WEBHOOKS ====================--
 local __lastWebhookAt = 0
-local function getRequester() return (syn and syn.request) or http_request or request end
-local RARITY_COLOR = { Common=0x9aa0a6, Uncommon=0x34a853, Rare=0x4285f4, Legendary=0xfbbc04, Godly=0xdb4437, Default=0x9aa0a6 }
-local function shouldSendPrivate(itemName) local sel = (getgenv().gagConfig.WEBHOOK_SELECT or {}).Private or {}; return sel[itemName] == true end
-local function shouldSendPublic(itemName) if not PUBLIC_WH_ENABLED then return false end return PUBLIC_SELECT[itemName] == true end
+local function getRequester()
+    return (syn and syn.request) or http_request or request
+end
+
+local RARITY_COLOR = {
+    Common    = 0x9aa0a6,
+    Uncommon  = 0x34a853,
+    Rare      = 0x4285f4,
+    Legendary = 0xfbbc04,
+    Godly     = 0xdb4437,
+    Default   = 0x9aa0a6
+}
+
+local function shouldSendPrivate(itemName)
+    local sel = (getgenv().gagConfig.WEBHOOK_SELECT or {}).Private or {}
+    return sel[itemName] == true
+end
+
+local function shouldSendPublic(itemName)
+    if not PUBLIC_WH_ENABLED then return false end
+    return PUBLIC_SELECT[itemName] == true
+end
+
 local function collectWebhookUrlsFor(itemName)
     local urls = {}
+
     local priv = tostring(getgenv().gagConfig.PrivateWebhook or "")
-    if priv ~= "" and shouldSendPrivate(itemName) then table.insert(urls, priv) end
-    if PUBLIC_WH_ENABLED and PUBLIC_WEBHOOK and PUBLIC_WEBHOOK ~= "" and shouldSendPublic(itemName) then table.insert(urls, PUBLIC_WEBHOOK) end
+    if priv ~= "" and shouldSendPrivate(itemName) then
+        table.insert(urls, priv)
+    end
+
+    if PUBLIC_WH_ENABLED and PUBLIC_WEBHOOK and PUBLIC_WEBHOOK ~= "" and shouldSendPublic(itemName) then
+        table.insert(urls, PUBLIC_WEBHOOK)
+    end
+
     return urls
 end
+
 local function sendDiscordPayload(urls, payload)
     local req = getRequester()
-    if not req then warn("[WH] Executor không hỗ trợ http_request/syn.request/request"); return end
+    if not req then
+        warn("[WH] Executor không hỗ trợ http_request/syn.request/request")
+        return
+    end
     if #urls == 0 then return end
+
     local dt = os.clock() - __lastWebhookAt
     if dt < 0.6 then task.wait(0.6 - dt) end
+
     for _, url in ipairs(urls) do
         local ok, res = pcall(function()
-            return req({ Url=url, Method="POST", Headers={["Content-Type"]="application/json"}, Body=HttpService:JSONEncode(payload) })
+            return req({
+                Url     = url,
+                Method  = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body    = HttpService:JSONEncode(payload)
+            })
         end)
+
         if ok and res and res.StatusCode and res.StatusCode >= 200 and res.StatusCode < 300 then
             print("[WH] OK:", url)
         else
             warn("[WH] FAIL:", url, res and res.StatusCode, res and res.StatusMessage)
         end
     end
+
     __lastWebhookAt = os.clock()
 end
+
 local function sendItemWebhook(itemName, jobId)
-    local urls = collectWebhookUrlsFor(itemName); if #urls == 0 then return end
+    local urls = collectWebhookUrlsFor(itemName)
+    if #urls == 0 then return end
+
     local info    = CRATE_INDEX[itemName] or {}
     local rarity  = info.Rarity or "?"
     local percent = info.Percent
     local dtype   = info.Type or "?"
+
     local embed = {
         title       = "🎁 Opened: " .. tostring(itemName),
         description = table.concat({
@@ -860,141 +1104,317 @@ local function sendItemWebhook(itemName, jobId)
         }, "\n"),
         color   = (RARITY_COLOR[rarity] or RARITY_COLOR.Default),
         author  = { name = string.format("@%s • %s", Players.LocalPlayer.Name, Players.LocalPlayer.DisplayName) },
-        thumbnail = { url = string.format("https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=150&height=150&format=png", Players.LocalPlayer.UserId) },
+        thumbnail = {
+            url = string.format("https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=150&height=150&format=png",
+                                Players.LocalPlayer.UserId)
+        },
         footer = { text = string.format("Job %s • %s UTC", tostring(jobId), os.date("!%Y-%m-%d %H:%M:%S")) },
     }
-    local payload = { username = string.format("CrateBot • %s", Players.LocalPlayer.DisplayName), embeds = { embed } }
+
+    local payload = {
+        username = string.format("CrateBot • %s", Players.LocalPlayer.DisplayName),
+        embeds   = { embed }
+    }
+
     sendDiscordPayload(urls, payload)
 end
 
 --==================== OPEN LOOP ====================--
 local OPEN_JOB_ID = 0
 local function nextOpenJob() OPEN_JOB_ID = OPEN_JOB_ID + 1 return OPEN_JOB_ID end
+
 getgenv().GAG_CratesOpened = getgenv().GAG_CratesOpened or 0
 
 local function runOpenByThreshold()
     if not G.OPEN_ENABLE_LOOP then return end
+
     local ARGS = G.OPEN_ARGS or { "Summer2025Box" }
     local TH   = tonumber(G.OPEN_THRESHOLD or 800) or 800
+
     log("Crate auto-open by WALLET threshold >= " .. tostring(TH))
+
     while true do
         local bb = getBeachballsWalletOnlySafe()
         if bb and bb >= TH then
             local jobId = nextOpenJob()
+
             local prev  = snapshotInventoryFlat()
-            local ok, res = pcall(function() return openCrate:InvokeServer(unpack(ARGS)) end)
+            local ok, res = pcall(function()
+                return openCrate:InvokeServer(unpack(ARGS))
+            end)
+
             if ok then
                 getgenv().GAG_CratesOpened = (tonumber(getgenv().GAG_CratesOpened) or 0) + 1
                 log("Opened crate:", table.concat(ARGS, ", "))
-            else warnl("Open crate failed:", tostring(res)) end
+            else
+                warnl("Open crate failed:", tostring(res))
+            end
+
             local timeout = G.OBS_TIMEOUT_SEC or 3.0
             local poll    = G.OBS_POLL_SEC or 0.15
             local t0      = os.clock()
             local sentAny = false
+
             repeat
                 task.wait(poll)
                 local added = diffAdded(prev, snapshotInventoryFlat())
                 local any   = false
-                for name, _delta in pairs(added) do any = true; sendItemWebhook(name, jobId) end
-                if any then sentAny = true; break end
+
+                for name, _delta in pairs(added) do
+                    any = true
+                    sendItemWebhook(name, jobId)
+                end
+
+                if any then
+                    sentAny = true
+                    break
+                end
             until (os.clock() - t0) > timeout
-            if not sentAny then log("No new item detected within window.") end
+
+            if not sentAny then
+                log("No new item detected within window.")
+            end
+
             task.wait(0.6)
-        else task.wait(0.6) end
+        else
+            task.wait(0.6)
+        end
     end
 end
 
 --==================== HUD / OVERLAY ====================--
 local function createOverlay()
     local gui = Instance.new("ScreenGui")
-    gui.Name = "GAG_Overlay"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    local ok = pcall(function() gui.Parent = game:GetService("CoreGui") end)
-    if not ok then local pg = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui"); gui.Parent = pg end
+    gui.Name = "GAG_Overlay"
+    gui.IgnoreGuiInset = true
+    gui.ResetOnSpawn   = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local ok = pcall(function()
+        gui.Parent = game:GetService("CoreGui")
+    end)
+    if not ok then
+        local pg = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui")
+        gui.Parent = pg
+    end
+
+    -- blackout layer
     local blackout = Instance.new("Frame")
-    blackout.Name = "Blackout"; blackout.BackgroundColor3 = Color3.new(0,0,0); blackout.BackgroundTransparency = 0; blackout.BorderSizePixel = 0
-    blackout.Size = UDim2.fromScale(1,1); blackout.Position = UDim2.new(0,0,0,0); blackout.ZIndex = 10; blackout.Parent = gui
+    blackout.Name = "Blackout"
+    blackout.BackgroundColor3       = Color3.new(0,0,0)
+    blackout.BackgroundTransparency = 0
+    blackout.BorderSizePixel        = 0
+    blackout.Size     = UDim2.fromScale(1,1)
+    blackout.Position = UDim2.new(0,0,0,0)
+    blackout.ZIndex   = 10
+    blackout.Parent   = gui
+
+    -- account label
     local label = Instance.new("TextLabel")
-    label.Name="AccountName"; label.AnchorPoint=Vector2.new(0.5,0.5); label.Position=UDim2.fromScale(0.5,0.40); label.Size=UDim2.new(0.9,0,0,120)
-    label.BackgroundTransparency=1; label.Text=string.format("%s  (@%s)", LP.DisplayName, LP.Name); label.Font=Enum.Font.GothamBlack
-    label.TextScaled=true; label.TextColor3=Color3.fromRGB(255,255,255); label.TextStrokeColor3=Color3.fromRGB(0,0,0); label.TextStrokeTransparency=0.3; label.ZIndex=11; label.Parent=blackout
+    label.Name = "AccountName"
+    label.AnchorPoint = Vector2.new(0.5,0.5)
+    label.Position    = UDim2.fromScale(0.5, 0.40)
+    label.Size        = UDim2.new(0.9, 0, 0, 120)
+    label.BackgroundTransparency = 1
+    label.Text = string.format("%s  (@%s)", LP.DisplayName, LP.Name)
+    label.Font = Enum.Font.GothamBlack
+    label.TextScaled = true
+    label.TextColor3 = Color3.fromRGB(255,255,255)
+    label.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+    label.TextStrokeTransparency = 0.3
+    label.ZIndex = 11
+    label.Parent = blackout
+
+    -- toggle button
     local btn = Instance.new("TextButton")
-    btn.Name="ToggleOverlay"; btn.AnchorPoint=Vector2.new(1,0); btn.Position=UDim2.new(1,-20,0,20); btn.Size=UDim2.new(0,140,0,40)
-    btn.BackgroundColor3=Color3.fromRGB(25,25,25); btn.TextColor3=Color3.fromRGB(255,255,255); btn.Text="GUI: ON"; btn.Font=Enum.Font.GothamBold; btn.TextSize=18; btn.AutoButtonColor=true; btn.ZIndex=20; btn.Parent=gui
-    local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0,8); corner.Parent = btn
-    local stroke = Instance.new("UIStroke"); stroke.Thickness = 1; stroke.Color = Color3.fromRGB(90,90,90); stroke.Parent = btn
+    btn.Name = "ToggleOverlay"
+    btn.AnchorPoint = Vector2.new(1,0)
+    btn.Position    = UDim2.new(1, -20, 0, 20)
+    btn.Size        = UDim2.new(0, 140, 0, 40)
+    btn.BackgroundColor3 = Color3.fromRGB(25,25,25)
+    btn.TextColor3  = Color3.fromRGB(255,255,255)
+    btn.Text        = "GUI: ON"
+    btn.Font        = Enum.Font.GothamBold
+    btn.TextSize    = 18
+    btn.AutoButtonColor = true
+    btn.ZIndex      = 20
+    btn.Parent      = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0,8)
+    corner.Parent = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1
+    stroke.Color     = Color3.fromRGB(90,90,90)
+    stroke.Parent    = btn
+
+    -- toggle logic
     local overlayOn = G.OVERLAY_ON_AT_START ~= false
+
     local function setOverlay(v)
-        overlayOn=v; blackout.Visible=v
+        overlayOn       = v
+        blackout.Visible= v
+
         local big     = blackout:FindFirstChild("BeachballHUD_Big")
         local crates  = blackout:FindFirstChild("CrateHUD_Big")
         local compact = gui:FindFirstChild("BeachballHUD_Compact")
+
         if big     then big.Visible     = v end
         if crates  then crates.Visible  = v end
         if compact then compact.Visible = not v end
+
         btn.Text = v and "GUI: ON" or "GUI: OFF"
     end
+
     pcall(function()
         game:GetService("UserInputService").InputBegan:Connect(function(input, gp)
             if gp then return end
-            if input.KeyCode == Enum.KeyCode.RightShift then setOverlay(not overlayOn) end
+            if input.KeyCode == Enum.KeyCode.RightShift then
+                setOverlay(not overlayOn)
+            end
         end)
     end)
-    getgenv().ToggleGAGUI = function(v) if typeof(v) == "boolean" then setOverlay(v) else setOverlay(not overlayOn) end end
-    btn.MouseButton1Click:Connect(function() setOverlay(not overlayOn) end)
+
+    getgenv().ToggleGAGUI = function(v)
+        if typeof(v) == "boolean" then setOverlay(v) else setOverlay(not overlayOn) end
+    end
+
+    btn.MouseButton1Click:Connect(function()
+        setOverlay(not overlayOn)
+    end)
+
     setOverlay(overlayOn)
     return gui
 end
 
 local function startBeachballHUD()
-    local gui = nil; pcall(function() gui = game:GetService("CoreGui"):FindFirstChild("GAG_Overlay") end)
-    if not gui then local pg = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui"); gui = pg:FindFirstChild("GAG_Overlay") end
+    local gui = nil
+    pcall(function() gui = game:GetService("CoreGui"):FindFirstChild("GAG_Overlay") end)
+    if not gui then
+        local pg = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui")
+        gui = pg:FindFirstChild("GAG_Overlay")
+    end
     if not gui then gui = createOverlay() end
+
     local blackout = gui:FindFirstChild("Blackout")
+
+    -- Big Beachball value
     local big = blackout and blackout:FindFirstChild("BeachballHUD_Big")
     if not big and blackout then
         big = Instance.new("TextLabel")
-        big.Name = "BeachballHUD_Big"; big.AnchorPoint=Vector2.new(0.5,0); big.Position=UDim2.fromScale(0.5,0.58); big.Size=UDim2.new(0.9,0,0,90)
-        big.BackgroundTransparency=1; big.ZIndex=12; big.Font=Enum.Font.GothamBlack; big.TextScaled=true; big.TextXAlignment=Enum.TextXAlignment.Center; big.TextYAlignment=Enum.TextYAlignment.Center
-        big.TextColor3=Color3.fromRGB(255,255,255); big.TextStrokeColor3=Color3.fromRGB(0,0,0); big.TextStrokeTransparency=0.25; big.Text="🏖️ BeachBalls: …"; big.Parent=blackout
+        big.Name = "BeachballHUD_Big"
+        big.AnchorPoint = Vector2.new(0.5,0)
+        big.Position    = UDim2.fromScale(0.5, 0.58)
+        big.Size        = UDim2.new(0.9, 0, 0, 90)
+        big.BackgroundTransparency = 1
+        big.ZIndex      = 12
+        big.Font        = Enum.Font.GothamBlack
+        big.TextScaled  = true
+        big.TextXAlignment = Enum.TextXAlignment.Center
+        big.TextYAlignment = Enum.TextYAlignment.Center
+        big.TextColor3 = Color3.fromRGB(255,255,255)
+        big.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+        big.TextStrokeTransparency = 0.25
+        big.Text = "🏖️ BeachBalls: …"
+        big.Parent = blackout
     end
+
+    -- Big crates opened
     local cratesBig = blackout and blackout:FindFirstChild("CrateHUD_Big")
     if not cratesBig and blackout then
         cratesBig = Instance.new("TextLabel")
-        cratesBig.Name="CrateHUD_Big"; cratesBig.AnchorPoint=Vector2.new(0.5,0); cratesBig.Position=UDim2.fromScale(0.5,0.70); cratesBig.Size=UDim2.new(0.9,0,0,70)
-        cratesBig.BackgroundTransparency=1; cratesBig.ZIndex=12; cratesBig.Font=Enum.Font.GothamSemibold; cratesBig.TextScaled=true; cratesBig.TextXAlignment=Enum.TextXAlignment.Center; cratesBig.TextYAlignment=Enum.TextYAlignment.Center
-        cratesBig.TextColor3=Color3.fromRGB(255,255,255); cratesBig.TextStrokeColor3=Color3.fromRGB(0,0,0); cratesBig.TextStrokeTransparency=0.3; cratesBig.Text="🎁 Crates opened: 0"; cratesBig.Parent=blackout
+        cratesBig.Name = "CrateHUD_Big"
+        cratesBig.AnchorPoint = Vector2.new(0.5,0)
+        cratesBig.Position    = UDim2.fromScale(0.5, 0.70)
+        cratesBig.Size        = UDim2.new(0.9, 0, 0, 70)
+        cratesBig.BackgroundTransparency = 1
+        cratesBig.ZIndex = 12
+        cratesBig.Font = Enum.Font.GothamSemibold
+        cratesBig.TextScaled = true
+        cratesBig.TextXAlignment = Enum.TextXAlignment.Center
+        cratesBig.TextYAlignment = Enum.TextYAlignment.Center
+        cratesBig.TextColor3 = Color3.fromRGB(255,255,255)
+        cratesBig.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+        cratesBig.TextStrokeTransparency = 0.3
+        cratesBig.Text = "🎁 Crates opened: 0"
+        cratesBig.Parent = blackout
     end
+
+    -- Compact card (shows when blackout hidden)
     local card = gui:FindFirstChild("BeachballHUD_Compact")
     if not card then
         card = Instance.new("Frame")
-        card.Name="BeachballHUD_Compact"; card.AnchorPoint=Vector2.new(0,0); card.Position=UDim2.new(0,20,0,70); card.Size=UDim2.new(0,320,0,42)
-        card.BackgroundColor3=Color3.fromRGB(20,20,20); card.BorderSizePixel=0; card.ZIndex=25; card.Visible=not blackout.Visible; card.Parent=gui
-        local corner = Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,8); corner.Parent=card
-        local stroke = Instance.new("UIStroke"); stroke.Thickness=1; stroke.Color=Color3.fromRGB(90,90,90); stroke.Parent=card
+        card.Name = "BeachballHUD_Compact"
+        card.AnchorPoint = Vector2.new(0,0)
+        card.Position    = UDim2.new(0, 20, 0, 70)
+        card.Size        = UDim2.new(0, 320, 0, 42)
+        card.BackgroundColor3 = Color3.fromRGB(20,20,20)
+        card.BorderSizePixel  = 0
+        card.ZIndex           = 25
+        card.Visible          = not blackout.Visible
+        card.Parent           = gui
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 8)
+        corner.Parent = card
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Thickness = 1
+        stroke.Color     = Color3.fromRGB(90,90,90)
+        stroke.Parent    = card
+
         local txt = Instance.new("TextLabel")
-        txt.Name="Value"; txt.BackgroundTransparency=1; txt.Position=UDim2.new(0,12,0,0); txt.Size=UDim2.fromScale(1,1)
-        txt.Font=Enum.Font.GothamSemibold; txt.TextXAlignment=Enum.TextXAlignment.Left; txt.TextYAlignment=Enum.TextYAlignment.Center
-        txt.TextColor3=Color3.fromRGB(255,255,255); txt.TextSize=18; txt.ZIndex=26; txt.Text="🏖️ BeachBalls: …  |  🎁 Crates: 0"; txt.Parent=card
+        txt.Name = "Value"
+        txt.BackgroundTransparency = 1
+        txt.Position = UDim2.new(0, 12, 0, 0)
+        txt.Size     = UDim2.fromScale(1,1)
+        txt.Font     = Enum.Font.GothamSemibold
+        txt.TextXAlignment = Enum.TextXAlignment.Left
+        txt.TextYAlignment = Enum.TextYAlignment.Center
+        txt.TextColor3 = Color3.fromRGB(255,255,255)
+        txt.TextSize   = 18
+        txt.ZIndex     = 26
+        txt.Text       = "🏖️ BeachBalls: …  |  🎁 Crates: 0"
+        txt.Parent     = card
     end
+
     local compactLabel = card:FindFirstChild("Value")
+
+    -- Live updater
     task.spawn(function()
         local lastShownBig, lastShownSmall, lastCratesBig = nil, nil, nil
         while true do
             local n       = getBeachballsWalletOnlySafe()
             local bbText  = (n ~= nil) and ("🏖️ BeachBalls: " .. tostring(n))
-                             or ((LAST_WALLET_BB ~= nil) and ("🏖️ BeachBalls: " .. tostring(LAST_WALLET_BB)) or "🏖️ BeachBalls: …")
+                             or ((LAST_WALLET_BB ~= nil) and ("🏖️ BeachBalls: " .. tostring(LAST_WALLET_BB))
+                                 or "🏖️ BeachBalls: …")
+
             local crates     = tonumber(getgenv().GAG_CratesOpened) or 0
             local cratesText = "🎁 Crates opened: " .. tostring(crates)
-            if big and bbText ~= lastShownBig then big.Text = bbText; lastShownBig = bbText end
-            if cratesBig and cratesText ~= lastCratesBig then cratesBig.Text = cratesText; lastCratesBig  = cratesText end
+
+            if big and bbText ~= lastShownBig then
+                big.Text = bbText
+                lastShownBig = bbText
+            end
+
+            if cratesBig and cratesText ~= lastCratesBig then
+                cratesBig.Text = cratesText
+                lastCratesBig  = cratesText
+            end
+
             local smallText = bbText .. "  |  🎁 Crates: " .. tostring(crates)
-            if compactLabel and smallText ~= lastShownSmall then compactLabel.Text = smallText; lastShownSmall = smallText end
+            if compactLabel and smallText ~= lastShownSmall then
+                compactLabel.Text = smallText
+                lastShownSmall    = smallText
+            end
+
             task.wait(1.0)
         end
     end)
 end
 
---==================== BEACHBALL WATCHDOG (5m) ====================--
+--==================== BEACHBALL WATCHDOG (5p) ====================--
 local function startBeachballWatchdog()
     if not G.BB_WATCH_ENABLE then return end
     task.spawn(function()
@@ -1002,15 +1422,25 @@ local function startBeachballWatchdog()
         while true do
             local interval = tonumber(G.BB_WATCH_INTERVAL or 300) or 300
             task.wait(interval)
+
+            -- đọc ví beachball an toàn (leaderstats ưu tiên, thỉnh thoảng mới gọi remote)
             local cur = getBeachballsWalletOnlySafe()
+
+            -- nếu chưa có dữ liệu lần đầu => đặt mốc và bỏ qua
             if last == nil then
                 last = cur
             else
+                -- nếu không tăng (<=) thì kick
+                -- lưu ý: nếu bạn có mở crate làm giảm BB thì điều kiện này vẫn sẽ kick
                 if cur ~= nil and last ~= nil and cur <= last then
                     local msg = tostring(G.BB_WATCH_KICK_MSG or "No BeachBalls gained in the last period.")
-                    pcall(function() Players.LocalPlayer:Kick(msg) end)
+                    pcall(function()
+                        game:GetService("Players").LocalPlayer:Kick(msg)
+                    end)
+                    -- sau khi Kick, thường script sẽ dừng; thoát vòng lặp để an toàn
                     break
                 else
+                    -- có tăng -> cập nhật mốc
                     last = cur
                 end
             end
@@ -1018,72 +1448,11 @@ local function startBeachballWatchdog()
     end)
 end
 
---==================== BOOT GATE (đợi game/UI sẵn sàng) ====================--
-local function waitPath(root, segs, tmax)
-    local cur, deadline = root, os.clock() + (tmax or 30)
-    for _, name in ipairs(segs) do
-        repeat
-            cur = cur and cur:FindFirstChild(name)
-            if cur then break end
-            task.wait(0.1)
-        until os.clock() > deadline
-        if not cur then return nil end
-    end
-    return cur
-end
-
-local function waitAssetsQuiet(maxSec, queueThresh)
-    local t0 = os.clock(); queueThresh = queueThresh or 1
-    repeat
-        task.wait(0.25)
-        local q = 0; pcall(function() q = ContentProvider.RequestQueueSize end)
-        if q <= queueThresh then return true end
-    until os.clock() - t0 > (maxSec or 20)
-    return false
-end
-
-local function waitDeviceSelectGone(maxSec)
-    if not DEFAULTS.WAIT_DEVICESELECT then return end
-    local t0 = os.clock()
-    repeat
-        local sel = ReplicatedFirst:FindFirstChild("UISelector")
-        local loading = sel and sel:FindFirstChild("Loading")
-        local stillThere = loading and loading.Parent
-        if not stillThere then return true end
-        task.wait(0.25)
-    until os.clock() - t0 > (maxSec or 30)
-end
-
-local function waitForFullReady()
-    local deadline = os.clock() + (G.READY_MAX_WAIT or DEFAULTS.READY_MAX_WAIT)
-    Character = LP.Character or LP.CharacterAdded:Wait()
-    Humanoid  = Character:WaitForChild("Humanoid", 30)
-    HRP       = Character:WaitForChild("HumanoidRootPart", 30)
-    waitPath(ReplicatedStorage, {"Remotes","Shop","OpenCrate"}, 30)
-    waitPath(ReplicatedStorage, {"Database","Sync"}, 30)
-    waitPath(ReplicatedStorage, {"Modules","ProfileData"}, 30)
-    if G.BALANCE_DETECT then
-        waitPath(Players.LocalPlayer, {"PlayerGui"}, 30)
-        local segs = G.BALANCE_GUI_SEGMENTS or {"PlayerGui","MainGUI","Game","CoinBags","Container","BeachBall"}
-        waitPath(Players.LocalPlayer, segs, 45)
-    end
-    waitDeviceSelectGone(30)
-    waitAssetsQuiet(20, 1)
-    task.wait(G.BOOT_EXTRA_WAIT_SEC or DEFAULTS.BOOT_EXTRA_WAIT_SEC)
-    ensureBalanceReady(20)
-    if os.clock() > deadline then warn("[BOOT] Hết thời gian chờ, tiếp tục chạy với những gì có.") end
-end
-
 --==================== STARTUP ====================--
-startAutoDeviceSelect()  -- chạy sớm để bấm chọn device ngay khi UI xuất hiện
-
-task.spawn(function()
-    waitForFullReady()   -- đợi game/UI sẵn sàng thật sự rồi mới bật các luồng chính
-    if G.OPTIMIZE    then task.defer(killVisualCosts)  end
-    if G.ANTIAFK     then task.defer(startAntiAFK)     end
-    if G.AUTOCOLLECT then task.defer(runFarm)          end
-    task.defer(startBeachballWatchdog)
-    task.defer(createOverlay)
-    task.defer(startBeachballHUD)
-    task.defer(runOpenByThreshold)
-end)
+if G.OPTIMIZE    then task.defer(killVisualCosts)  end
+if G.ANTIAFK     then task.defer(startAntiAFK)     end
+if G.AUTOCOLLECT then task.defer(runFarm)          end
+task.defer(startBeachballWatchdog)
+task.defer(createOverlay)
+task.defer(startBeachballHUD)
+task.defer(runOpenByThreshold)
