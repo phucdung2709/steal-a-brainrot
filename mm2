@@ -1,4 +1,4 @@
---===[ AUTO-SELECT DEVICE (Tablet) + MAIN SCRIPT | OPTIMIZED BUILD ]===--
+--===[ AUTO-SELECT DEVICE (Tablet) + MAIN SCRIPT ]===--
 
 -- Guard
 repeat task.wait() until game:IsLoaded()
@@ -74,16 +74,6 @@ local DEFAULTS = {
     OPTIMIZE             = true,
     ANTIAFK              = true,
     OVERLAY_ON_AT_START  = true,
-
-    -- === KHÓA TỐI ƯU HOÁ NHẸ CPU (SAFE) ===
-    NORENDER             = false, -- true = tắt 3D render
-    OPT_DISABLE_SOUNDS   = true,  -- tắt âm thanh
-    OPT_STRIP_LIGHTING   = true,  -- gỡ post-effect, giảm Lighting
-    OPT_TERRAIN_LIGHT    = true,  -- tối giản Terrain
-    OPT_QUEUE_BUDGET     = 1200,  -- (không dùng trong SAFE) giữ để tương thích
-    OPT_MIN_SLEEP        = 0,     -- (không dùng trong SAFE)
-    OPT_USE_QUEUE        = true,  -- (không dùng trong SAFE)
-    OPT_MODE             = "safe" -- "safe" | "aggressive" (chỉ trim GUI client, không đụng Workspace)
 }
 
 --==================== SERVICES ====================--
@@ -423,7 +413,7 @@ local function getNearbyCoins_index(originPos, limit)
     end
     table.sort(CoinList, function(a, b)
         return dist(originPos, a.Position) < dist(originPos, b.Position)
-    end)
+    end))
     return CoinList
 end
 
@@ -440,7 +430,7 @@ local function getNearbyCoins_radius(originPos, limit)
     end
     table.sort(list, function(a, b)
         return dist(originPos, a.Position) < dist(originPos, b.Position)
-    end)
+    end))
     return list
 end
 
@@ -759,97 +749,97 @@ local function startAntiAFK()
     end)
 end
 
---==================== >>> OPTIMIZER (SAFE) <<< ====================--
--- Chỉ tối ưu cấp hệ thống, KHÔNG đụng Workspace Parts (né anti-cheat).
--- G.OPT_MODE = "safe" | "aggressive" (aggressive chỉ trim GUI client).
-if G.OPT_MODE == nil then G.OPT_MODE = "safe" end
-
-local function applyLightingTerrainSound()
-    if G.NORENDER then
-        pcall(function() RunService:Set3dRenderingEnabled(false) end)
-    end
-
-    if G.OPT_STRIP_LIGHTING then
-        pcall(function()
-            Lighting.GlobalShadows = false
-            Lighting.EnvironmentDiffuseScale  = 0
-            Lighting.EnvironmentSpecularScale = 0
-            for _, eff in ipairs(Lighting:GetChildren()) do
-                if eff:IsA("Atmosphere")
-                or eff:IsA("BloomEffect")
-                or eff:IsA("DepthOfFieldEffect")
-                or eff:IsA("SunRaysEffect")
-                or eff:IsA("ColorCorrectionEffect")
-                or eff:IsA("BlurEffect") then
-                    eff.Enabled = false
-                end
-            end
-        end)
-    end
-
-    if G.OPT_TERRAIN_LIGHT then
-        pcall(function()
-            local t = Workspace:FindFirstChildOfClass("Terrain")
-            if t then
-                t.WaterReflectance  = 0
-                t.WaterTransparency = 1
-                t.WaterWaveSize     = 0
-                t.WaterWaveSpeed    = 0
-                t.Decoration        = false
-            end
-        end)
-    end
-
-    if G.OPT_DISABLE_SOUNDS then
-        pcall(function() SoundService.Volume = 0 end)
-    end
-end
-
-local function applyAggressiveClientGuiTrim()
-    local function trimGui(root)
-        if not root then return end
-        for _, d in ipairs(root:GetDescendants()) do
-            if d:IsA("ParticleEmitter") then
-                pcall(function()
-                    d.Enabled = false
-                    d.Rate = 0
-                    d.Lifetime = NumberRange.new(0)
-                    d.Speed = NumberRange.new(0)
-                end)
-            elseif d:IsA("Trail") then
-                pcall(function() d.Enabled = false end)
-            elseif d:IsA("Beam") then
-                pcall(function() d.Transparency = NumberSequence.new(1) end)
-            elseif d:IsA("VideoFrame") then
-                pcall(function() d.Playing = false d.Looped = false d.Volume = 0 end)
-            end
-        end
-    end
-
-    local okCore, CoreGui = pcall(function() return game:GetService("CoreGui") end)
-    if okCore and CoreGui then trimGui(CoreGui) end
-
-    local pg = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if pg then trimGui(pg) end
-end
-
-local function runOptimizerLoop()
-    applyLightingTerrainSound()
-    if (G.OPT_MODE or "safe") == "aggressive" then
-        applyAggressiveClientGuiTrim()
-    end
-    while G.OPTIMIZE do
-        task.wait(1.0)
-        if G.NORENDER then
-            pcall(function() RunService:Set3dRenderingEnabled(false) end)
-        end
-    end
-end
+--==================== OPTIMIZER ====================--
+local function isCharacterDescendant(inst) return Character and inst:IsDescendantOf(Character) end
+local function isCoinPart(inst)         return inst:IsA("BasePart") and matchesName(inst.Name) end
 
 local function killVisualCosts()
-    runOptimizerLoop()
+    if not G.OPTIMIZE then return end
+    dbg("Optimize mode: reducing graphics (safe)")
+
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.FogStart, Lighting.FogEnd = 0, 50
+        for _, c in ipairs(Lighting:GetChildren()) do
+            if c:IsA("PostEffect") then c.Enabled = false end
+        end
+        local atmos = Lighting:FindFirstChildOfClass("Atmosphere")
+        if atmos then atmos.Density = 0 end
+    end)
+
+    pcall(function()
+        local t = Workspace:FindFirstChildOfClass("Terrain")
+        if t then
+            t.WaterReflectance = 0
+            t.WaterTransparency = 1
+            t.WaterWaveSize = 0
+            t.WaterWaveSpeed = 0
+            t.Decoration = false
+        end
+    end)
+
+    pcall(function()
+        SoundService.Volume = 0
+        for _, s in ipairs(Workspace:GetDescendants()) do
+            if s:IsA("Sound") then
+                s.Volume = 0
+                s.Playing = false
+            end
+        end
+    end)
+
+    for _, inst in ipairs(Workspace:GetDescendants()) do
+        if inst:IsA("BasePart") then
+            if not isCharacterDescendant(inst) and not isCoinPart(inst) then
+                pcall(function()
+                    inst.LocalTransparencyModifier = 1
+                    inst.CastShadow = false
+                    inst.Material = Enum.Material.SmoothPlastic
+                    inst.Reflectance = 0
+                end)
+            else
+                pcall(function() inst.LocalTransparencyModifier = 0 end)
+            end
+        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+            if not isCharacterDescendant(inst) then
+                pcall(function() inst.Transparency = 1 end)
+            end
+        elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
+            or inst:IsA("Explosion") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+            pcall(function() inst.Enabled = false end)
+        elseif inst:IsA("Light") then
+            pcall(function() inst.Enabled = false end)
+        end
+    end
+
+    Workspace.DescendantAdded:Connect(function(inst)
+        task.defer(function()
+            if inst:IsA("BasePart") then
+                if not isCharacterDescendant(inst) and not isCoinPart(inst) then
+                    pcall(function()
+                        inst.LocalTransparencyModifier = 1
+                        inst.CastShadow = false
+                        inst.Material = Enum.Material.SmoothPlastic
+                        inst.Reflectance = 0
+                    end)
+                else
+                    pcall(function() inst.LocalTransparencyModifier = 0 end)
+                end
+            elseif inst:IsA("Decal") or inst:IsA("Texture") then
+                if not isCharacterDescendant(inst) then pcall(function() inst.Transparency = 1 end) end
+            elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
+                or inst:IsA("Explosion") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+                pcall(function() inst.Enabled = false end)
+            elseif inst:IsA("Light") then
+                pcall(function() inst.Enabled = false end)
+            elseif inst:IsA("Sound") then
+                pcall(function() inst.Volume = 0; inst.Playing = false end)
+            elseif inst:IsDescendantOf(Lighting) and inst:IsA("PostEffect") then
+                pcall(function() inst.Enabled = false end)
+            end
+        end)
+    end)
 end
---==================== >>> /OPTIMIZER (SAFE) <<< ====================--
 
 --==================== FARM LOOP (ONE-SHOT STYLE) ====================--
 local farmRunning = false
@@ -1432,25 +1422,29 @@ local function startBeachballWatchdog()
             task.wait(interval)
 
             local cur = getBeachballsWalletOnlySafe()
+            -- Nếu đọc lỗi (nil), bỏ qua chu kỳ này để tránh kick nhầm
             if cur == nil then
-                -- không đọc được: bỏ qua chu kỳ
+                -- không đổi mốc, tiếp tục vòng lặp
             else
                 cur  = tonumber(cur) or cur
                 last = tonumber(last) or last
 
                 if last == nil then
+                    -- Chu kỳ đầu có dữ liệu -> đặt mốc
                     last = cur
                 else
                     if cur > last then
+                        -- ĐÃ TĂNG: OK, cập nhật mốc
                         last = cur
                     elseif cur == last then
+                        -- KHÔNG TĂNG: kick
                         local msg = tostring(G.BB_WATCH_KICK_MSG or "No BeachBalls gained in the last period.")
                         pcall(function()
-                            Players.LocalPlayer:Kick(msg)
+                            game:GetService("Players").LocalPlayer:Kick(msg)
                         end)
                         break
-                    else
-                        -- giảm (mở crate): cập nhật mốc, không kick
+                    else -- cur < last
+                        -- BỊ GIẢM (ví dụ do mở crate): KHÔNG kick, chỉ cập nhật mốc
                         last = cur
                     end
                 end
