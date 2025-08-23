@@ -74,6 +74,10 @@ local DEFAULTS = {
     OPTIMIZE             = true,
     ANTIAFK              = true,
     OVERLAY_ON_AT_START  = true,
+
+    -- NEW OPTI KEYS
+    DISABLE_3D_RENDER    = true,   -- cố gắng tắt 3D rendering
+    BLACK_WORLD          = true,   -- ép Lighting & môi trường về đen tuyệt đối
 }
 
 --==================== SERVICES ====================--
@@ -117,7 +121,7 @@ do
         end
     end
 
-    local function trySelectOn(containerParent) -- removed `: Instance?`
+    local function trySelectOn(containerParent)
         local ok, tabletBtn = pcall(function()
             local container = containerParent and containerParent:WaitForChild("Container", 5)
             local tablet    = container and container:WaitForChild("Tablet", 5)
@@ -753,20 +757,76 @@ end
 local function isCharacterDescendant(inst) return Character and inst:IsDescendantOf(Character) end
 local function isCoinPart(inst)         return inst:IsA("BasePart") and matchesName(inst.Name) end
 
-local function killVisualCosts()
-    if not G.OPTIMIZE then return end
-    dbg("Optimize mode: reducing graphics (safe)")
-
+-- NEW: ép Lighting/môi trường về đen tuyệt đối
+local function forceBlackLighting()
     pcall(function()
+        Lighting.Brightness = 0
         Lighting.GlobalShadows = false
-        Lighting.FogStart, Lighting.FogEnd = 0, 50
+        Lighting.Ambient = Color3.new(0,0,0)
+        Lighting.OutdoorAmbient = Color3.new(0,0,0)
+        Lighting.ColorShift_Bottom = Color3.new(0,0,0)
+        Lighting.ColorShift_Top = Color3.new(0,0,0)
+        Lighting.EnvironmentDiffuseScale = 0
+        Lighting.EnvironmentSpecularScale = 0
+        Lighting.ExposureCompensation = -2
+        Lighting.ClockTime = 0
+
+        Lighting.FogColor = Color3.new(0,0,0)
+        Lighting.FogStart, Lighting.FogEnd = 0, 25
+
         for _, c in ipairs(Lighting:GetChildren()) do
             if c:IsA("PostEffect") then c.Enabled = false end
         end
-        local atmos = Lighting:FindFirstChildOfClass("Atmosphere")
-        if atmos then atmos.Density = 0 end
-    end)
 
+        local sky = Lighting:FindFirstChildOfClass("Sky")
+        if sky then sky:Destroy() end
+
+        Lighting.ChildAdded:Connect(function(inst)
+            task.defer(function()
+                if inst:IsA("PostEffect") then inst.Enabled = false end
+                if inst:IsA("Sky") then pcall(function() inst:Destroy() end) end
+            end)
+        end)
+    end)
+end
+
+-- REPLACED: killVisualCosts với 3D render toggle + black-out
+local function killVisualCosts()
+    if not G.OPTIMIZE then return end
+    dbg("Optimize mode: reducing graphics + 3D render toggle + black-out")
+
+    -- 1) Tắt 3D render nếu có thể
+    if G.DISABLE_3D_RENDER then
+        pcall(function()
+            if RunService.Set3dRenderingEnabled then
+                RunService:Set3dRenderingEnabled(false)
+                dbg("3D rendering disabled via RunService:Set3dRenderingEnabled(false)")
+            end
+        end)
+        pcall(function()
+            if setrenderproperty then
+                setrenderproperty(false)
+                dbg("3D rendering disabled via setrenderproperty(false)")
+            end
+        end)
+    end
+
+    -- 2) Đưa Lighting về đen tuyệt đối (nếu bật)
+    if G.BLACK_WORLD then
+        forceBlackLighting()
+    else
+        pcall(function()
+            Lighting.GlobalShadows = false
+            Lighting.FogStart, Lighting.FogEnd = 0, 50
+            for _, c in ipairs(Lighting:GetChildren()) do
+                if c:IsA("PostEffect") then c.Enabled = false end
+            end
+            local atmos = Lighting:FindFirstChildOfClass("Atmosphere")
+            if atmos then atmos.Density = 0 end
+        end)
+    end
+
+    -- 3) Terrain & âm thanh
     pcall(function()
         local t = Workspace:FindFirstChildOfClass("Terrain")
         if t then
@@ -777,7 +837,6 @@ local function killVisualCosts()
             t.Decoration = false
         end
     end)
-
     pcall(function()
         SoundService.Volume = 0
         for _, s in ipairs(Workspace:GetDescendants()) do
@@ -788,54 +847,86 @@ local function killVisualCosts()
         end
     end)
 
+    -- 4) Làm đen/ẩn phần lớn vật thể không cần thiết
     for _, inst in ipairs(Workspace:GetDescendants()) do
         if inst:IsA("BasePart") then
             if not isCharacterDescendant(inst) and not isCoinPart(inst) then
                 pcall(function()
-                    inst.LocalTransparencyModifier = 1
-                    inst.CastShadow = false
-                    inst.Material = Enum.Material.SmoothPlastic
-                    inst.Reflectance = 0
+                    if G.BLACK_WORLD then
+                        inst.Color = Color3.new(0,0,0)
+                        inst.Material = Enum.Material.SmoothPlastic
+                        inst.LocalTransparencyModifier = 1
+                    else
+                        inst.LocalTransparencyModifier = 1
+                        inst.CastShadow = false
+                        inst.Material = Enum.Material.SmoothPlastic
+                        inst.Reflectance = 0
+                    end
                 end)
             else
                 pcall(function() inst.LocalTransparencyModifier = 0 end)
             end
         elseif inst:IsA("Decal") or inst:IsA("Texture") then
             if not isCharacterDescendant(inst) then
-                pcall(function() inst.Transparency = 1 end)
+                pcall(function()
+                    if G.BLACK_WORLD then
+                        inst.Color3 = Color3.new(0,0,0)
+                    end
+                    inst.Transparency = 1
+                end)
             end
         elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
             or inst:IsA("Explosion") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
             pcall(function() inst.Enabled = false end)
         elseif inst:IsA("Light") then
-            pcall(function() inst.Enabled = false end)
+            pcall(function()
+                inst.Enabled = false
+                if inst.Color then inst.Color = Color3.new(0,0,0) end
+            end)
         end
     end
 
+    -- 5) Áp quy tắc cho object mới sinh
     Workspace.DescendantAdded:Connect(function(inst)
         task.defer(function()
             if inst:IsA("BasePart") then
                 if not isCharacterDescendant(inst) and not isCoinPart(inst) then
                     pcall(function()
-                        inst.LocalTransparencyModifier = 1
-                        inst.CastShadow = false
-                        inst.Material = Enum.Material.SmoothPlastic
-                        inst.Reflectance = 0
+                        if G.BLACK_WORLD then
+                            inst.Color = Color3.new(0,0,0)
+                            inst.Material = Enum.Material.SmoothPlastic
+                            inst.LocalTransparencyModifier = 1
+                        else
+                            inst.LocalTransparencyModifier = 1
+                            inst.CastShadow = false
+                            inst.Material = Enum.Material.SmoothPlastic
+                            inst.Reflectance = 0
+                        end
                     end)
                 else
                     pcall(function() inst.LocalTransparencyModifier = 0 end)
                 end
             elseif inst:IsA("Decal") or inst:IsA("Texture") then
-                if not isCharacterDescendant(inst) then pcall(function() inst.Transparency = 1 end) end
+                if not isCharacterDescendant(inst) then
+                    pcall(function()
+                        if G.BLACK_WORLD then
+                            inst.Color3 = Color3.new(0,0,0)
+                        end
+                        inst.Transparency = 1
+                    end)
+                end
             elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam")
                 or inst:IsA("Explosion") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
                 pcall(function() inst.Enabled = false end)
             elseif inst:IsA("Light") then
+                pcall(function()
+                    inst.Enabled = false
+                    if inst.Color then inst.Color = Color3.new(0,0,0) end
+                end)
+            elseif inst:IsDescendantOf(Lighting) and inst:IsA("PostEffect") then
                 pcall(function() inst.Enabled = false end)
             elseif inst:IsA("Sound") then
                 pcall(function() inst.Volume = 0; inst.Playing = false end)
-            elseif inst:IsDescendantOf(Lighting) and inst:IsA("PostEffect") then
-                pcall(function() inst.Enabled = false end)
             end
         end)
     end)
@@ -1407,7 +1498,7 @@ local function startBeachballHUD()
                 lastShownSmall    = smallText
             end
 
-            task.wait(1.0)
+            task.wait( 0.25)
         end
     end)
 end
@@ -1452,6 +1543,8 @@ local function startBeachballWatchdog()
         end
     end)
 end
+
+--==================== BOOT ====================--
 if G.OPTIMIZE    then task.defer(killVisualCosts)  end
 if G.ANTIAFK     then task.defer(startAntiAFK)     end
 if G.AUTOCOLLECT then task.defer(runFarm)          end
