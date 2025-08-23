@@ -1545,6 +1545,7 @@ local function startBeachballWatchdog()
 end
 
 --==================== BOOT ====================--
+--==================== BOOT ====================--
 if G.OPTIMIZE    then task.defer(killVisualCosts)  end
 if G.ANTIAFK     then task.defer(startAntiAFK)     end
 if G.AUTOCOLLECT then task.defer(runFarm)          end
@@ -1552,3 +1553,33 @@ task.defer(startBeachballWatchdog)
 task.defer(createOverlay)
 task.defer(startBeachballHUD)
 task.defer(runOpenByThreshold)
+
+--==================== NUKE ALL GAME GUI ====================--
+local function nukeAllGameGUI()
+    pcall(function()
+        local sg = game:GetService("StarterGui")
+
+        -- Tắt toàn bộ CoreGui mặc định (Backpack, PlayerList, Chat...)
+        sg:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
+
+        -- Xoá hết ScreenGui trong PlayerGui (trừ hub overlay)
+        for _, gui in ipairs(PlayerGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Name ~= "GAG_Overlay" then
+                gui:Destroy()
+            end
+        end
+
+        -- Nếu có GUI mới spawn thì cũng xoá ngay (trừ hub overlay)
+        PlayerGui.ChildAdded:Connect(function(child)
+            if child:IsA("ScreenGui") and child.Name ~= "GAG_Overlay" then
+                task.defer(function()
+                    if child and child.Parent then
+                        child:Destroy()
+                    end
+                end)
+            end
+        end)
+    end)
+end
+
+task.defer(nukeAllGameGUI)
