@@ -1,22 +1,3 @@
---===[ AUTO-SELECT DEVICE (Tablet) + MAIN SCRIPT ]===--
-
--- Guard
-repeat task.wait() until game:IsLoaded()
-
---==================== CONFIG (GIỮ NGUYÊN) ====================--
-getgenv().gagConfig = getgenv().gagConfig or {
-    Debug          = true,
-    AutoFarm       = true,
-    OpenCrate      = true,
-    PrivateWebhook = "https://discord.com/api/webhooks/1259214765641961634/srgjZz026jzHWXSjD7KCderNpRsYDuVd5g4m3KHXFnj9ZcCr1JGH2jeoxP3-ewIkhOH9",
-    WEBHOOK_SELECT = {
-        Private = {
-            ["Striped"] = false, ["Stickers"] = false, ["Dolphins"] = false, ["Skyline"] = false,
-            ["Soda"] = false, ["Retro"] = false, ["Lava"] = false, ["Neon"] = false,
-            ["Pop Art"] = false, ["Aquarium"] = false, ["Sunrise"] = true, ["Chroma Sunrise"] = true,
-        }
-    },
-}
 
 local PUBLIC_WH_ENABLED = true
 local PUBLIC_WEBHOOK = "https://discord.com/api/webhooks/1408097792420745356/p0moTMJuhP2_oLKZwwIIXlNJ3gdWBhO8viRThxJMreYqTliUo-E8ohag2uMsEWoApl9X"
